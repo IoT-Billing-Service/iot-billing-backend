@@ -25,7 +25,14 @@ const DEFAULT_LOCK_OPTIONS: Required<Omit<LockOptions, 'heartbeatIntervalMs'>> &
 
 export class AdvisoryLockManager extends EventEmitter {
   private pool: pg.Pool;
-  private heldLocks = new Map<number, { timer: ReturnType<typeof setTimeout>; heartbeat?: ReturnType<typeof setInterval>; client: pg.PoolClient }>();
+  private heldLocks = new Map<
+    number,
+    {
+      timer: ReturnType<typeof setTimeout>;
+      heartbeat?: ReturnType<typeof setInterval>;
+      client: pg.PoolClient;
+    }
+  >();
 
   constructor(pool: pg.Pool) {
     super();
@@ -148,7 +155,8 @@ export class AdvisoryLockManager extends EventEmitter {
     if (held.heartbeat) clearInterval(held.heartbeat);
     this.heldLocks.delete(lockId);
 
-    held.client.query(`SELECT pg_advisory_unlock($1)`, [lockId])
+    held.client
+      .query(`SELECT pg_advisory_unlock($1)`, [lockId])
       .then(() => held.client.release())
       .catch(() => held.client.release());
 

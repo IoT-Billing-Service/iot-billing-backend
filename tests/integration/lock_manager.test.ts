@@ -3,7 +3,9 @@ import pg from 'pg';
 import { AdvisoryLockManager } from '../../src/core/ingestion/lock_manager.js';
 
 const DB_URL = process.env['INTEGRATION_DATABASE_URL'];
-const pool = DB_URL ? new pg.Pool({ connectionString: DB_URL, connectionTimeoutMillis: 2000 }) : null;
+const pool = DB_URL
+  ? new pg.Pool({ connectionString: DB_URL, connectionTimeoutMillis: 2000 })
+  : null;
 const manager = pool ? new AdvisoryLockManager(pool) : null;
 let dbAvailable = false;
 
@@ -79,12 +81,16 @@ describe('AdvisoryLockManager Integration', () => {
     const first = await manager!.acquireLock('dev-backoff', 1718000000000, { ttlMs: 2000 });
     expect(first.acquired).toBe(true);
     const retryResult = await manager!.tryAcquireWithRetry('dev-backoff', 1718000000000, {
-      ttlMs: 2000, retryAttempts: 5, retryBaseDelayMs: 50,
+      ttlMs: 2000,
+      retryAttempts: 5,
+      retryBaseDelayMs: 50,
     });
     expect(retryResult.acquired).toBe(false);
     await manager!.releaseLock('dev-backoff', 1718000000000);
     const afterRelease = await manager!.tryAcquireWithRetry('dev-backoff', 1718000000000, {
-      ttlMs: 5000, retryAttempts: 3, retryBaseDelayMs: 50,
+      ttlMs: 5000,
+      retryAttempts: 3,
+      retryBaseDelayMs: 50,
     });
     expect(afterRelease.acquired).toBe(true);
     await manager!.releaseLock('dev-backoff', 1718000000000);
@@ -95,7 +101,8 @@ describe('AdvisoryLockManager Integration', () => {
     const heartbeatFn = vi.fn();
     manager!.on('heartbeat', heartbeatFn);
     const result = await manager!.acquireLock('dev-hb', 1718000000000, {
-      ttlMs: 2000, heartbeatIntervalMs: 200,
+      ttlMs: 2000,
+      heartbeatIntervalMs: 200,
     });
     expect(result.acquired).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -109,7 +116,9 @@ describe('AdvisoryLockManager Integration', () => {
     const deviceId = 'dev-concurrent-10';
     const workers = Array.from({ length: 10 }, () =>
       manager!.tryAcquireWithRetry(deviceId, bucketEpoch, {
-        ttlMs: 5000, retryAttempts: 2, retryBaseDelayMs: 50,
+        ttlMs: 5000,
+        retryAttempts: 2,
+        retryBaseDelayMs: 50,
       }),
     );
     const results = await Promise.all(workers);
