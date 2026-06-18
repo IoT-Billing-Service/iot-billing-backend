@@ -45,7 +45,12 @@ export class TransactionManager {
       return record;
     } catch (error) {
       record.status = 'failed';
-      record.error = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (/tx_bad_seq/i.test(message)) {
+        record.error = `ERR:${message}`;
+      } else {
+        record.error = message;
+      }
       await this.noncePool.release(workerId);
       return record;
     }

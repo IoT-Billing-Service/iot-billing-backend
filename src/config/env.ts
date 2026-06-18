@@ -42,3 +42,7 @@ export function getEnv(): Env {
   if (!cachedEnv) return loadEnv();
   return cachedEnv;
 }
+
+export function clearEnvCache(): void {
+  cachedEnv = null;
+}

@@ -3,6 +3,7 @@ export enum IngestionState {
   TENTATIVE = 'TENTATIVE',
   SETTLED = 'SETTLED',
   ROLLED_BACK = 'ROLLED_BACK',
+  RECONCILING = 'RECONCILING',
   FAILED = 'FAILED',
 }
 
@@ -21,7 +22,8 @@ const VALID_TRANSITIONS: Record<IngestionState, IngestionState[]> = {
     IngestionState.FAILED,
   ],
   [IngestionState.SETTLED]: [],
-  [IngestionState.ROLLED_BACK]: [],
+  [IngestionState.ROLLED_BACK]: [IngestionState.RECONCILING],
+  [IngestionState.RECONCILING]: [IngestionState.PENDING, IngestionState.FAILED],
   [IngestionState.FAILED]: [],
 };
 
