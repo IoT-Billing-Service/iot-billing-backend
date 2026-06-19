@@ -61,7 +61,8 @@ export class MtlsGatewayVerifier {
     const ocspMatch = /OCSP - URI:(http[^\n]+)/.exec(infoAccess);
     if (ocspMatch == null) return true;
 
-    const ocspUrl = ocspMatch[1] as string;
+    const ocspUrl = ocspMatch[1] ?? '';
+    if (ocspUrl === '') return true;
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
