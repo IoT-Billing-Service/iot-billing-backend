@@ -119,7 +119,9 @@ export class ChallengeStore {
     const key = this.key(walletAddress);
     const results = await this.redis.multi().get(key).del(key).exec();
     if (!results || results.length === 0) return null;
-    const [getErr, getVal] = results[0];
+    const firstResult = results[0];
+    if (!firstResult) return null;
+    const [getErr, getVal] = firstResult;
     if (getErr) return null;
     return (getVal as string) ?? null;
   }
