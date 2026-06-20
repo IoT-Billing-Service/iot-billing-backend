@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NoncePool } from '../../src/core/blockchain/nonce_pool.js';
 import { SorobanRpcClient, CircuitState } from '../../src/core/blockchain/rpc_client.js';
 import { IngestionStateMachine, IngestionState } from '../../src/core/ingestion/state_machine.js';
+import { TransactionManager } from '../../src/core/blockchain/tx_manager.js';
 
 describe('NoncePool', () => {
   let pool: NoncePool;
@@ -20,6 +21,88 @@ describe('NoncePool', () => {
     await pool.acquire('worker-a');
     await pool.release('worker-a');
     expect(pool.getActiveCount()).toBe(0);
+  });
+
+  it('should support stress testing with 50 concurrent acquire calls and verify contiguous sequences', async () => {
+    const promises = Array.from({ length: 50 }, (_, i) => pool.acquire(`worker-${String(i)}`));
+    const results = await Promise.all(promises);
+
+    expect(results).toHaveLength(50);
+    for (let i = 1; i < results.length; i++) {
+      const prev = results[i - 1];
+      expect(prev).toBeDefined();
+      if (typeof prev === 'number') {
+        expect(results[i]).toBe(prev + 1);
+      }
+    }
+  });
+
+  it('should seed counter from on-ledger value on construction and synchronize', async () => {
+    const mockHorizonClient = {
+      fetchAccountSequence: (address: string): Promise<bigint> => {
+        globalThis.console.log(`fetching account sequence for ${address}`);
+        return Promise.resolve(42n);
+      },
+    };
+    const syncPool = new NoncePool('GABCDEF', mockHorizonClient);
+    const seq = await syncPool.acquire('worker-a');
+    expect(seq).toBe(43); // 42 + 1
+    syncPool.cleanup();
+  });
+
+  it('should synchronize only if drift is > 1', async () => {
+    const ledgerSeq = 100n;
+    const mockHorizonClient = {
+      fetchAccountSequence: (address: string): Promise<bigint> => {
+        globalThis.console.log(`fetching account sequence for ${address}`);
+        return Promise.resolve(ledgerSeq);
+      },
+    };
+    const syncPool = new NoncePool('GABCDEF', mockHorizonClient);
+    await syncPool.acquire('worker-init');
+
+    // Drift = 1, should not sync
+    await syncPool.resetCounter(101);
+    await syncPool.synchronize();
+    expect(syncPool.getCurrentSequence()).toBe(101);
+
+    // Drift = 2, should sync
+    await syncPool.resetCounter(102);
+    await syncPool.synchronize();
+    expect(syncPool.getCurrentSequence()).toBe(100);
+
+    // Ledger ahead, should sync
+    await syncPool.resetCounter(98);
+    await syncPool.synchronize();
+    expect(syncPool.getCurrentSequence()).toBe(100);
+
+    syncPool.cleanup();
+  });
+
+  it('should retry once on tx_bad_seq and succeed if the second attempt succeeds', async () => {
+    const rpcClient = new SorobanRpcClient('https://rpc.example.com');
+    let calls = 0;
+    vi.spyOn(rpcClient, 'submitTransaction').mockImplementation(() => {
+      calls++;
+      if (calls === 1) {
+        return Promise.reject(new Error('tx_bad_seq: sequence number mismatch'));
+      }
+      return Promise.resolve({ hash: 'tx-hash', status: 'success' });
+    });
+
+    const mockHorizonClient = {
+      fetchAccountSequence: (address: string): Promise<bigint> => {
+        globalThis.console.log(`fetching account sequence for ${address}`);
+        return Promise.resolve(100n);
+      },
+    };
+    const syncPool = new NoncePool('GABCDEF', mockHorizonClient);
+    const txManager = new TransactionManager(rpcClient, syncPool);
+
+    const record = await txManager.submitChargeUsage('worker-1', 'dev-001', 100n, 'contract-1');
+    expect(calls).toBe(2);
+    expect(record.status).toBe('submitted');
+    syncPool.cleanup();
   });
 });
 

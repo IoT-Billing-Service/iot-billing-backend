@@ -25,6 +25,7 @@ export class TransactionManager {
     deviceId: string,
     usageAmount: bigint,
     contractId: string,
+    isRetry = false,
   ): Promise<TransactionRecord> {
     const sequenceNumber = await this.noncePool.acquire(workerId);
     const envelope = this.buildChargeEnvelope(contractId, deviceId, usageAmount, sequenceNumber);
@@ -44,8 +45,19 @@ export class TransactionManager {
       record.status = 'submitted';
       return record;
     } catch (error) {
-      record.status = 'failed';
       const message = error instanceof Error ? error.message : String(error);
+
+      if (/tx_bad_seq/i.test(message) && !isRetry) {
+        await this.noncePool.release(workerId);
+        try {
+          await this.noncePool.synchronize();
+        } catch (syncErr) {
+          console.error('Auto-sync failed during tx_bad_seq retry:', syncErr);
+        }
+        return this.submitChargeUsage(workerId, deviceId, usageAmount, contractId, true);
+      }
+
+      record.status = 'failed';
       if (/tx_bad_seq/i.test(message)) {
         record.error = `ERR:${message}`;
       } else {
