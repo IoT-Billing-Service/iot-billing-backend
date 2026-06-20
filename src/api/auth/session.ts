@@ -123,7 +123,7 @@ export class ChallengeStore {
     if (!firstResult) return null;
     const [getErr, getVal] = firstResult;
     if (getErr) return null;
-    return (getVal as string | null);
+    return getVal as string | null;
   }
 
   getTtlSeconds(): number {
