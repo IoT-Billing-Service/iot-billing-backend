@@ -16,7 +16,10 @@ export interface RateLimitResult {
   retryAfterMs?: number;
 }
 
-const TIER_CONFIG: Record<string, { baseRate: number; maxTokens: number }> = {
+const TIER_CONFIG: Record<
+  'free' | 'standard' | 'enterprise',
+  { baseRate: number; maxTokens: number }
+> = {
   free: { baseRate: 10, maxTokens: 10 },
   standard: { baseRate: 100, maxTokens: 100 },
   enterprise: { baseRate: 500, maxTokens: 500 },
@@ -157,7 +160,7 @@ export class DynamicRateLimiter {
   }
 
   async checkLimit(deviceProfile: DeviceProfile): Promise<RateLimitResult> {
-    const tier = TIER_CONFIG[deviceProfile.billingTier] ?? TIER_CONFIG['free']!;
+    const tier = TIER_CONFIG[deviceProfile.billingTier];
     const compliance = Math.max(0, Math.min(1, deviceProfile.historicalCompliance));
     const effectiveRate = tier.baseRate * (0.5 + 0.5 * compliance);
     const burstRate = effectiveRate * BURST_MULTIPLIER;
@@ -184,12 +187,7 @@ export class DynamicRateLimiter {
     if (!Array.isArray(raw) || raw.length < 4) {
       throw new Error('Unexpected Lua response from token bucket script');
     }
-    const [tokensRaw, maxRaw, resetAtRaw, allowedRaw] = raw as [
-      number,
-      number,
-      number,
-      number,
-    ];
+    const [tokensRaw, maxRaw, resetAtRaw, allowedRaw] = raw as [number, number, number, number];
 
     const allowed = allowedRaw === 1;
     return {
