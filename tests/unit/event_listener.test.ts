@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion, @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -10,13 +10,17 @@ import { PrismaClient } from '@prisma/client';
 
 // ─── Prisma mock factory ───────────────────────────────────────────────────
 
-function makePrismaMock(foundRow: { lastSyncedLedger: number } | null = null): PrismaClient {
-  return {
+function makePrismaMock(
+  foundRow: { lastSyncedLedger: number } | null = null,
+): any {
+  const upsertMock = vi.fn().mockResolvedValue(undefined);
+  const prisma = {
     ledgerSyncState: {
       findUnique: vi.fn().mockResolvedValue(foundRow),
-      upsert: vi.fn().mockResolvedValue(undefined),
+      upsert: upsertMock,
     },
   } as unknown as PrismaClient;
+  return Object.assign(prisma, { upsertMock });
 }
 
 // ─── Fetch mock helpers ────────────────────────────────────────────────────
@@ -113,7 +117,7 @@ describe('LedgerEventSynchronizer', () => {
     await sync.catchUp(0, 128);
 
     // upsert should be called at least twice (once per 64-ledger boundary + final)
-    expect(prisma.ledgerSyncState.upsert as any).toHaveBeenCalledTimes(2);
+    expect(prisma.upsertMock).toHaveBeenCalledTimes(2);
     expect(sync.getSyncState().lastSyncedLedger).toBe(128);
   });
 
