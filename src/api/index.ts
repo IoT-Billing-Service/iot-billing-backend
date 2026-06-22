@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import Fastify from 'fastify';
@@ -26,6 +25,7 @@ import {
   registerMetricsRoute,
   setLedgerSyncMetrics,
 } from './metrics/prometheus.js';
+import { registerCircuitHealth } from './health.js';
 import { GcPauseMonitor } from './metrics/gc_monitor.js';
 import { PoolMetricsCollector } from './metrics/pool_metrics_collector.js';
 

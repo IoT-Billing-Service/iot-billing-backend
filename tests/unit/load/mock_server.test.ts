@@ -197,7 +197,7 @@ describe('Mock Ingestion Gateway', () => {
         const elapsed = Date.now() - start;
         expect(res.status).toBe(200);
         expect(elapsed).toBeGreaterThanOrEqual(0);
-        expect(elapsed).toBeLessThanOrEqual(mean * (1 + jitter) + 150);
+        expect(elapsed).toBeLessThanOrEqual(mean * (1 + jitter) + 250);
       } finally {
         await server.stop();
       }

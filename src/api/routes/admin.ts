@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/strict-boolean-expressions */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { getEnv } from '../../config/env.js';

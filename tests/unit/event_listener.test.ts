@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';

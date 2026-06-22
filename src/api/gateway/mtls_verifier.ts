@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
 import { X509Certificate } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { getRedis } from '../../database/redis.js';

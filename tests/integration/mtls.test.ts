@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-redundant-type-constituents */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { MtlsGatewayVerifier } from '../../src/api/gateway/mtls_verifier.js';
 import { PrismaClient } from '@prisma/client';

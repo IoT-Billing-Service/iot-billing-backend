@@ -39,6 +39,12 @@ export const circuitBreakerState: promClient.Gauge = new promClient.Gauge({
   labelNames: ['client'],
 });
 
+export const circuitBreakerQueueDepth: promClient.Gauge = new promClient.Gauge({
+  name: 'circuit_breaker_queue_depth',
+  help: 'Current number of requests queued in the circuit breaker',
+  labelNames: ['client'],
+});
+
 export const noncePoolDepth: promClient.Gauge = new promClient.Gauge({
   name: 'nonce_pool_active_count',
   help: 'Active nonce reservations in the pool',
