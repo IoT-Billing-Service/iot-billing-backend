@@ -453,10 +453,15 @@ describe('Authentication Timing Attack Side-Channel Resistance', () => {
       url: '/api/auth/challenge',
       payload: { walletAddress: kp.publicKey() },
     });
-    const { nonce } = challengeRes.json<any>();
     
-    const validSig = kp.sign(Buffer.from(nonce, 'hex')).toString('hex');
-    const invalidSig = Buffer.alloc(64).toString('hex');
+    // Fix 'any' errors by explicitly defining the expected type
+        // Safely cast via unknown to completely satisfy strict type and any lint guards
+        // Parse response body directly to completely satisfy all conflicting type assertion and any lint guards
+    const rawBody: { nonce: string } = JSON.parse(challengeRes.body) as { nonce: string };
+    const nonce: string = rawBody.nonce;
+    
+    const validSig: string = kp.sign(Buffer.from(nonce, 'hex')).toString('hex');
+    const invalidSig: string = Buffer.alloc(64).toString('hex');
 
     const validRuntimes: number[] = [];
     const invalidRuntimes: number[] = [];
@@ -481,15 +486,16 @@ describe('Authentication Timing Attack Side-Channel Resistance', () => {
       invalidRuntimes.push(performance.now() - t1);
     }
 
-    const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
-    const variance = (arr: number[], m: number) => arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);
+    // Fix missing return types on math functions
+    const mean = (arr: number[]): number => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const variance = (arr: number[], m: number): number => arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);
 
-    const mValid = mean(validRuntimes);
-    const mInvalid = mean(invalidRuntimes);
-    const vValid = variance(validRuntimes, mValid);
-    const vInvalid = variance(invalidRuntimes, mInvalid);
+    const mValid: number = mean(validRuntimes);
+    const mInvalid: number = mean(invalidRuntimes);
+    const vValid: number = variance(validRuntimes, mValid);
+    const vInvalid: number = variance(invalidRuntimes, mInvalid);
 
-    const tScore = (mValid - mInvalid) / Math.sqrt((vValid / 100) + (vInvalid / 100));
+    const tScore: number = (mValid - mInvalid) / Math.sqrt((vValid / 100) + (vInvalid / 100));
     expect(Math.abs(tScore)).toBeLessThan(2.58);
   });
 });
