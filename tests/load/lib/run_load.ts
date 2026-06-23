@@ -438,6 +438,11 @@ export function profileDefaults(profile: LoadProfile): Pick<RunLoadOptions, 'pay
       return { payloadsPerSec: 0.25 };
     case 'local':
       return { payloadsPerSec: 1 };
+    case 'production':
+      // The production profile is trace-driven: the per-event timing comes
+      // from a captured CSV, not a fixed per-device rate. This nominal value
+      // is only used when production mode falls back to the generic runner.
+      return { payloadsPerSec: 1 };
   }
 }
 

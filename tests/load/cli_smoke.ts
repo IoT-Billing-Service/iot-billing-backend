@@ -24,7 +24,23 @@ import { runLoad, profileDefaults } from './lib/run_load.js';
 import type { LoadMetrics } from './lib/types.js';
 
 const COMPACT = process.env['SMOKE_COMPACT'] === '1';
-const P99_CEILING_MS = Number.parseFloat(process.env['SMOKE_P99_CEILING_MS'] ?? '1500');
+
+/**
+ * Chaos mode (issue #66, blueprint item 4).
+ *
+ * A literal "kill one of N backend replicas mid-run" requires the staging
+ * Kubernetes cluster; in this single-process CI smoke we approximate a
+ * degraded/killed replica by forcing the mock gateway to return 500s for a
+ * fraction of requests (`SMOKE_INGEST_FAILURE_RATE`). The test then asserts
+ * graceful degradation: P99 stays under the chaos ceiling (default 2000ms,
+ * matching the issue's < 2s target) and the system still accepts traffic.
+ */
+const CHAOS = process.env['SMOKE_CHAOS'] === '1';
+const DEFAULT_CEILING_MS = CHAOS ? '2000' : '1500';
+const P99_CEILING_MS = Number.parseFloat(process.env['SMOKE_P99_CEILING_MS'] ?? DEFAULT_CEILING_MS);
+const INGEST_FAILURE_RATE = Number.parseFloat(
+  process.env['SMOKE_INGEST_FAILURE_RATE'] ?? (CHAOS ? '0.1' : '0'),
+);
 
 async function run(): Promise<void> {
   const port = Number.parseInt(process.env['SMOKE_PORT'] ?? '0', 10);
@@ -45,6 +61,7 @@ async function run(): Promise<void> {
     latencyMs,
     latencyJitter: 0.2,
     nonceWindowMs: 5_000,
+    ingestFailureRate: INGEST_FAILURE_RATE,
   });
   await server.start();
   console.log(`[cli_smoke] mock server ready on ${server.url}`);
@@ -52,7 +69,8 @@ async function run(): Promise<void> {
   console.log(
     `[cli_smoke] running profile=steady_state ` +
       `clients=${String(concurrentClients)} duration=${String(durationSec)}s ` +
-      `p99CeilingMs=${P99_CEILING_MS.toString()}`,
+      `p99CeilingMs=${P99_CEILING_MS.toString()} ` +
+      `chaos=${String(CHAOS)} ingestFailureRate=${INGEST_FAILURE_RATE.toString()}`,
   );
 
   const metrics: LoadMetrics = await runLoad({

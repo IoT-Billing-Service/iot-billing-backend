@@ -1,0 +1,8 @@
+{
+  "_comment": "Baseline metrics for the CI smoke profile (25 clients x 5s, steady_state, mock latency 1ms). Regenerate by running `npm run load:smoke` on a known-good main and copying load-test-results.json's metrics subset. The report (tests/load/lib/report.ts) fails CI if any tracked metric regresses by more than 20% (issue #66, item 5).",
+  "throughputPerSec": 20,
+  "p95LatencyMs": 250,
+  "p99LatencyMs": 400,
+  "errorRate": 0.05,
+  "accepted": 100
+}

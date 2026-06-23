@@ -11,6 +11,7 @@
  *   dist/k6/steady_state.js
  *   dist/k6/burst.js
  *   dist/k6/recovery.js
+ *   dist/k6/diurnal_pattern.js
  */
 
 import { build } from 'esbuild';
@@ -29,6 +30,7 @@ const profiles = [
   { name: 'steady_state', entry: path.resolve(here, 'src/steady_state.js') },
   { name: 'burst', entry: path.resolve(here, 'src/burst.js') },
   { name: 'recovery', entry: path.resolve(here, 'src/recovery.js') },
+  { name: 'diurnal_pattern', entry: path.resolve(here, 'src/diurnal_pattern.js') },
 ];
 
 async function main(): Promise<void> {

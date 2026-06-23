@@ -49,7 +49,7 @@ export interface IngestRequestBody {
   publicKey?: string;
 }
 
-export type LoadProfile = 'steady_state' | 'burst' | 'recovery' | 'local';
+export type LoadProfile = 'steady_state' | 'burst' | 'recovery' | 'local' | 'production';
 
 export interface ProfileConfig {
   profile: LoadProfile;

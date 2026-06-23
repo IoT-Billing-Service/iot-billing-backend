@@ -104,3 +104,50 @@ export function defaultOptions() {
     tags: { build: 'load-test-suite' },
   };
 }
+
+/**
+ * Backpressure detector (issue #66, blueprint item 3).
+ *
+ * A request slower than {@link BACKPRESSURE_THRESHOLD_MS} is treated as a
+ * symptom of a saturated component (the tx_manager queue, nonce_pool, or
+ * the ingestion backpressure pipeline). We tally the slow-request *rate*
+ * and, per offending component (read from the `X-Component` response
+ * header the gateway sets when it sheds load), a counter.
+ *
+ * Wire the returned `thresholds`/`metrics` into a profile's `options`, then
+ * call {@link recordBackpressure} for every response. The
+ * `backpressure_slow_rate` threshold aborts the run when more than 5% of
+ * requests breach the latency budget; {@link backpressureSummary} prints the
+ * offending components so the failure is actionable.
+ */
+export const BACKPRESSURE_THRESHOLD_MS = 1000;
+export const BACKPRESSURE_MAX_SLOW_RATE = 0.05;
+
+/**
+ * Build the k6 `Rate`/`Counter` metrics and matching thresholds for the
+ * detector. Imported lazily so this module stays usable outside k6 (the
+ * pure curve test never touches it).
+ */
+export function buildBackpressureChecks(Rate, Counter) {
+  const slowRate = new Rate('backpressure_slow_rate');
+  const slowByComponent = new Counter('backpressure_slow_by_component');
+  return {
+    metrics: { slowRate, slowByComponent },
+    thresholds: {
+      backpressure_slow_rate: [
+        { threshold: `rate<${String(BACKPRESSURE_MAX_SLOW_RATE)}`, abortOnFail: true },
+      ],
+    },
+  };
+}
+
+/** Record one response against the backpressure detector. */
+export function recordBackpressure(metrics, res) {
+  const slow = res.timings.duration > BACKPRESSURE_THRESHOLD_MS;
+  metrics.slowRate.add(slow);
+  if (slow) {
+    const component = res.headers['X-Component'] ?? 'unknown';
+    metrics.slowByComponent.add(1, { component });
+  }
+  return slow;
+}

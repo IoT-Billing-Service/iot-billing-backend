@@ -74,10 +74,72 @@ jobs:
             console.log('OK accepted=' + r.metrics.accepted + ' p99=' + r.metrics.latency.p99Ms.toFixed(2) + 'ms ceiling=' + ceilingMs + 'ms');
           "
 
+      # Regression report (issue #66, item 5): compares this run's metrics
+      # against tests/load/baseline.json and flags any metric that regressed
+      # by more than 20%. continue-on-error until the committed baseline has
+      # been calibrated against this CI runner's real numbers; once calibrated,
+      # drop continue-on-error to make regressions a hard gate.
+      - name: Regression report vs baseline
+        continue-on-error: true
+        run: npm run load:report -- ./load-test-results.json --max-regression 0.2
+
       - name: Upload load-test artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: load-test-results
           path: load-test-results.json
+          retention-days: 7
+
+  chaos-test:
+    name: Chaos (graceful degradation)
+    runs-on: ubuntu-latest
+    # Single-process analog of issue #66's "kill one replica mid-rollout":
+    # the mock gateway returns 500s for a fraction of requests and we assert
+    # the system degrades gracefully (P99 < 2s, still accepting traffic).
+    # The literal multi-replica chaos run lives in the staging k6 runbook.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Chaos smoke run (injected ingest failures)
+        env:
+          SMOKE_PORT: '0'
+          SMOKE_CONCURRENT: '25'
+          SMOKE_DURATION_SEC: '5'
+          SMOKE_LATENCY_MS: '1'
+          SMOKE_CHAOS: '1'
+          SMOKE_INGEST_FAILURE_RATE: '0.1'
+          SMOKE_P99_CEILING_MS: '2000'
+          SMOKE_OUTPUT: ${{ github.workspace }}/chaos-test-results.json
+        run: npm run load:smoke
+
+      - name: Validate graceful degradation
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const r = JSON.parse(fs.readFileSync('./chaos-test-results.json', 'utf-8'));
+            const ceilingMs = 2000;
+            if (!r.metrics) { console.error('missing metrics'); process.exit(1); }
+            if (r.metrics.accepted <= 0) { console.error('chaos: zero accepted (no graceful degradation)'); process.exit(1); }
+            if (r.metrics.latency.p99Ms > ceilingMs) {
+              console.error('chaos: P99 ' + r.metrics.latency.p99Ms.toFixed(2) + 'ms exceeded ' + ceilingMs + 'ms');
+              process.exit(1);
+            }
+            console.log('chaos OK accepted=' + r.metrics.accepted + ' p99=' + r.metrics.latency.p99Ms.toFixed(2) + 'ms errorRate=' + r.metrics.errorRate.toFixed(3));
+          "
+
+      - name: Upload chaos artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-test-results
+          path: chaos-test-results.json
           retention-days: 7

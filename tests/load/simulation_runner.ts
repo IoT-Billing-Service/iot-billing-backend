@@ -25,6 +25,7 @@ import nacl from 'tweetnacl';
 import { Buffer } from 'node:buffer';
 import { runLoad, profileDefaults, type RunLoadOptions } from './lib/run_load.js';
 import { type LoadMetrics, type LoadProfile, type SimulationMetrics } from './lib/types.js';
+import { parseTrace, replayTrace, type ReplayResult } from './lib/replay_trace.js';
 
 interface SimulatedDevice {
   deviceId: string;
@@ -138,6 +139,19 @@ interface ParsedArgs {
   durationSec: number;
   targetUrl: string | null;
   writeJsonPath: string | null;
+  tracePath: string | null;
+}
+
+const NAMED_PROFILES: readonly LoadProfile[] = [
+  'steady_state',
+  'burst',
+  'recovery',
+  'local',
+  'production',
+];
+
+function isLoadProfile(value: string): value is LoadProfile {
+  return (NAMED_PROFILES as readonly string[]).includes(value);
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -147,9 +161,10 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let durationSec = 30;
   let targetUrl: string | null = null;
   let writeJsonPath: string | null = null;
+  let tracePath: string | null = null;
 
   const first = args.shift();
-  if (first === 'steady_state' || first === 'burst' || first === 'recovery' || first === 'local') {
+  if (first !== undefined && isLoadProfile(first)) {
     profile = first;
   } else if (first !== undefined && /^\d+$/.test(first)) {
     concurrentClients = Number.parseInt(first, 10);
@@ -161,6 +176,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       targetUrl = args.shift() ?? null;
     } else if (token === '--json' && args.length > 0) {
       writeJsonPath = args.shift() ?? null;
+    } else if (token === '--trace' && args.length > 0) {
+      tracePath = args.shift() ?? null;
     } else if (token !== undefined && /^\d+$/.test(token)) {
       if (concurrentClients === 1000) {
         concurrentClients = Number.parseInt(token, 10);
@@ -177,7 +194,37 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     }
   }
 
-  return { profile, concurrentClients, durationSec, targetUrl, writeJsonPath };
+  return { profile, concurrentClients, durationSec, targetUrl, writeJsonPath, tracePath };
+}
+
+/**
+ * Production profile: replay a captured CSV trace of real event timestamps
+ * against the ingestion target, asserting P99 < 500ms and zero dropped
+ * events (issue #66, blueprint item 2).
+ */
+async function runProductionReplay(targetUrl: string, tracePath: string): Promise<ReplayResult> {
+  const fs = await import('node:fs');
+  const csv = await fs.promises.readFile(tracePath, 'utf-8');
+  const trace = parseTrace(csv);
+  console.log(
+    `[simulation_runner] production replay: ${String(trace.length)} events ` +
+      `from ${tracePath} -> ${targetUrl}`,
+  );
+  const result = await replayTrace({
+    targetUrl,
+    trace,
+    log: (msg) => {
+      console.log(msg);
+    },
+  });
+  if (!result.passed) {
+    throw new Error(
+      `Production replay failed invariants: p99Met=${String(result.p99Met)} ` +
+        `(p99=${result.latency.p99Ms.toFixed(2)}ms target=${String(result.p99TargetMs)}ms) ` +
+        `zeroDropped=${String(result.zeroDropped)} (dropped=${String(result.dropped)})`,
+    );
+  }
+  return result;
 }
 
 export async function runProfile(
@@ -204,12 +251,19 @@ export async function runProfile(
 }
 
 async function main(): Promise<void> {
-  const { profile, concurrentClients, durationSec, targetUrl, writeJsonPath } = parseArgs(
-    process.argv.slice(2),
-  );
+  const { profile, concurrentClients, durationSec, targetUrl, writeJsonPath, tracePath } =
+    parseArgs(process.argv.slice(2));
 
-  let metrics: LoadMetrics | SimulationMetrics;
-  if (profile === 'local' || targetUrl === null) {
+  let metrics: LoadMetrics | SimulationMetrics | ReplayResult;
+  if (profile === 'production') {
+    if (targetUrl === null) {
+      throw new Error('production profile requires an HTTP target (--http URL or LOAD_TARGET_URL)');
+    }
+    if (tracePath === null) {
+      throw new Error('production profile requires a captured trace (--trace path/to/trace.csv)');
+    }
+    metrics = await runProductionReplay(targetUrl, tracePath);
+  } else if (profile === 'local' || targetUrl === null) {
     metrics = await runSimulation(concurrentClients, durationSec);
   } else {
     metrics = await runProfile(profile, targetUrl, concurrentClients, durationSec);
