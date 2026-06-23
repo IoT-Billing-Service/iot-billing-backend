@@ -33,6 +33,21 @@ export const blockchainTxCounter: promClient.Counter = new promClient.Counter({
   labelNames: ['status'],
 });
 
+// Rate-limiter observability (issue #50). Every decision is served from
+// centralized Redis state (the token bucket is a server-side Lua script), so
+// the limiter is pod-agnostic by construction. This counter makes that visible
+// and lets us watch Redis load as HPA scales replicas.
+//
+// Note: the issue also proposed `rate_limiter_local_hits` for an in-process
+// cache layer. That cache is intentionally NOT implemented — a per-pod cache
+// would re-introduce the cross-pod state drift this issue exists to prevent —
+// so there is no local-hits counter to report.
+export const rateLimiterRedisHits: promClient.Counter = new promClient.Counter({
+  name: 'rate_limiter_redis_hits_total',
+  help: 'Rate-limiter decisions resolved against centralized Redis state, by outcome',
+  labelNames: ['decision'],
+});
+
 export const circuitBreakerState: promClient.Gauge = new promClient.Gauge({
   name: 'circuit_breaker_state',
   help: 'Current circuit breaker state (0=closed, 1=half-open, 2=open)',
@@ -173,6 +188,10 @@ export function recordTenantPoolGrant(tenantId: string, waitMs: number): void {
 export function recordTenantPoolRejection(tenantId: string, waitMs: number): void {
   tenantPoolWaitDuration.observe({ tenant_id: tenantId, result: 'rejected' }, waitMs);
   tenantPoolRejections.inc({ tenant_id: tenantId });
+}
+
+export function recordRateLimiterRedisHit(decision: 'allowed' | 'denied'): void {
+  rateLimiterRedisHits.inc({ decision });
 }
 
 export function recordGcPause(durationMs: number): void {

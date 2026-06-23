@@ -1,5 +1,6 @@
 import type { Redis } from 'ioredis';
 import { getRedis } from '../../database/redis.js';
+import { recordRateLimiterRedisHit } from '../metrics/prometheus.js';
 
 export interface DeviceProfile {
   deviceId: string;
@@ -190,6 +191,9 @@ export class DynamicRateLimiter {
     const [tokensRaw, maxRaw, resetAtRaw, allowedRaw] = raw as [number, number, number, number];
 
     const allowed = allowedRaw === 1;
+    // Every decision is resolved against shared Redis state — record it so the
+    // pod-agnostic limiter's Redis load is observable as replicas scale.
+    recordRateLimiterRedisHit(allowed ? 'allowed' : 'denied');
     return {
       allowed,
       tokensRemaining: Math.floor(tokensRaw),
