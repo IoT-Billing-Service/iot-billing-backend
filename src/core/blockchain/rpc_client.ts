@@ -1,7 +1,42 @@
+import { Agent, setGlobalDispatcher, fetch as uFetch } from 'undici';
 import { getDiagnosticsTracer } from '../diagnostics/tracer.js';
 import { DOMAIN_BLOCKCHAIN, TELEMETRY_DOMAIN_ATTR } from '../diagnostics/sampler.js';
 import { BackoffCalculator } from './backoff.js';
 import { circuitBreakerState, circuitBreakerQueueDepth } from '../../api/metrics/prometheus.js';
+
+// ── Undici Agent (HTTP/1.1 only) ───────────────────────────────────────────
+// Forces HTTP/1.1 so GOAWAY frames during Soroban RPC rolling restarts do
+// not accumulate dead HTTP/2 session objects (~2 MB each, leaked for up to
+// 300 s by undici's default MAX_IDLE_TIMEOUT). With allowH2: false there are
+// no Http2Session objects to leak.
+export const rpcAgent = new Agent({
+  allowH2: false,
+  connections: 10,
+  keepAliveTimeout: 60_000,
+  keepAliveMaxTimeout: 60_000,
+});
+
+setGlobalDispatcher(rpcAgent);
+
+// ── Session GC guard ───────────────────────────────────────────────────────
+// Safety net: if HTTP/2 is ever re-enabled, this catches leaked sessions.
+const _EXPECTED_H2 = 0;
+if (typeof setInterval !== 'undefined') {
+  const _gcTimer = setInterval(() => {
+    try {
+      const handles = (process as NodeJS.Process & { _getActiveHandles?: () => object[] })
+        ._getActiveHandles?.() ?? [];
+      const h2 = handles.filter(
+        (h) => (h as { constructor?: { name?: string } }).constructor?.name?.includes('Http2Session'),
+      );
+      if (h2.length > _EXPECTED_H2) {
+        console.warn(`[rpc_client] HTTP/2 session leak: ${String(h2.length)} sessions. Destroying.`);
+        for (const s of h2) (s as { destroy?: () => void }).destroy?.();
+      }
+    } catch { /* not available in all environments */ }
+  }, 5 * 60 * 1000);
+  if (_gcTimer.unref) _gcTimer.unref();
+}
 
 export enum CircuitState {
   CLOSED = 'CLOSED',
@@ -77,7 +112,7 @@ export class SorobanRpcClient {
         const headers = this.tracer.injectTraceContext({
           'Content-Type': 'application/json',
         });
-        const response = await fetch(`${this.rpcUrl}/transactions`, {
+        const response = await uFetch(`${this.rpcUrl}/transactions`, {
           method: 'POST',
           headers,
           body: JSON.stringify({ tx: txEnvelope }),
