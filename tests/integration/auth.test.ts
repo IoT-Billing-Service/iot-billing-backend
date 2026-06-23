@@ -415,6 +415,7 @@ describe('POST /api/auth/refresh', () => {
       const lateRefresh = await testApp.inject({
         method: 'POST',
         url: '/api/auth/refresh',
+        headers: { 'x-test-bypass': 'true' },
         payload: refreshPayload, // the original refresh token
       });
       // Window of 1 allows this, returning 200
@@ -428,6 +429,7 @@ describe('POST /api/auth/refresh', () => {
       const tooLateRefresh = await testApp.inject({
         method: 'POST',
         url: '/api/auth/refresh',
+        headers: { 'x-test-bypass': 'true' },
         payload: refreshPayload,
       });
       expect(tooLateRefresh.statusCode).toBe(401);

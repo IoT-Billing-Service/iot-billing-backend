@@ -221,7 +221,7 @@ export async function applyAuthRateLimiting(
   const ip = request.ip || '127.0.0.1';
   const now = Date.now();
   const WINDOW_MS = 60000; // 1 minute sliding window limit
-  
+
   // Initialize tracker profile if missing or expired
   if (!authWindowTracker[ip] || authWindowTracker[ip].resetAt < now) {
     authWindowTracker[ip] = {
