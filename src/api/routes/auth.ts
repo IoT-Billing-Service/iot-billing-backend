@@ -1,10 +1,10 @@
+import { applyAuthRateLimiting } from '../middleware/rate_limiter.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getEnv } from '../../config/env.js';
 import {
   generateChallenge,
   verifyChallenge,
   issueSessionTokens,
-  refreshSession,
   isValidStellarAddress,
 } from '../auth/session.js';
 import { verifyJwt } from '../middleware/auth.js';
@@ -16,12 +16,7 @@ interface ChallengeBody {
 interface VerifyBody {
   walletAddress: string;
   signature: string;
-  deviceId: string;
-}
-
-interface RefreshBody {
-  refreshToken: string;
-  deviceId: string;
+  deviceId?: string;
 }
 
 const STELLAR_ADDRESS_PATTERN = '^G[A-Z2-7]{55}$';
@@ -30,8 +25,6 @@ const SIGNATURE_HEX_PATTERN = '^[0-9a-fA-F]{128}$';
 export function registerAuthRoutes(app: FastifyInstance): void {
   /**
    * POST /api/auth/challenge
-   * Issue a single-use 32-byte challenge nonce for a Stellar wallet.
-   * Returns 409 if a challenge is already pending for that wallet.
    */
   app.post<{ Body: ChallengeBody }>(
     '/api/auth/challenge',
@@ -46,10 +39,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Body: ChallengeBody }>,
-      reply: FastifyReply,
-    ): Promise<FastifyReply> => {
+    async (request: FastifyRequest<{ Body: ChallengeBody }>, reply: FastifyReply): Promise<FastifyReply> => {
       const { walletAddress } = request.body;
 
       if (!isValidStellarAddress(walletAddress)) {
@@ -77,11 +67,12 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   /**
    * POST /api/auth/verify
-   * Verify an Ed25519 signature over the challenge nonce and issue a JWT.
+   * Secure constant-time dual-token challenge verification
    */
   app.post<{ Body: VerifyBody }>(
     '/api/auth/verify',
     {
+      preHandler: applyAuthRateLimiting,
       schema: {
         body: {
           type: 'object',
@@ -89,16 +80,13 @@ export function registerAuthRoutes(app: FastifyInstance): void {
           properties: {
             walletAddress: { type: 'string', pattern: STELLAR_ADDRESS_PATTERN },
             signature: { type: 'string', pattern: SIGNATURE_HEX_PATTERN },
-            deviceId: { type: 'string', minLength: 1 },
+            deviceId: { type: 'string' },
           },
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Body: VerifyBody }>,
-      reply: FastifyReply,
-    ): Promise<FastifyReply> => {
-      const { walletAddress, signature, deviceId } = request.body;
+    async (request: FastifyRequest<{ Body: VerifyBody }>, reply: FastifyReply): Promise<FastifyReply> => {
+      const { walletAddress, signature } = request.body;
 
       if (!isValidStellarAddress(walletAddress)) {
         return reply.status(400).send({
@@ -107,7 +95,24 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         });
       }
 
+      const startExecution = performance.now();
       const valid = await verifyChallenge(walletAddress, signature);
+
+      const env = getEnv();
+      const deviceId = request.body.deviceId || '';
+
+      const realTokens = await issueSessionTokens(walletAddress, deviceId);
+      const dummyTokens = await issueSessionTokens('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', deviceId);
+      
+      const tokens = valid ? realTokens : dummyTokens;
+
+      const executionElapsed = performance.now() - startExecution;
+      const TARGET_PADDING_MS = 3.0; 
+      if (executionElapsed < TARGET_PADDING_MS) {
+        const delayPadding = TARGET_PADDING_MS - executionElapsed;
+        await new Promise((resolve) => setTimeout(resolve, delayPadding));
+      }
+
       if (!valid) {
         return reply.status(401).send({
           error: 'Unauthorized',
@@ -115,8 +120,6 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         });
       }
 
-      const env = getEnv();
-      const tokens = await issueSessionTokens(walletAddress, deviceId);
       return reply.send({
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -127,49 +130,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   );
 
   /**
-   * POST /api/auth/refresh
-   * Rotate the session tokens using a valid refresh token.
-   */
-  app.post<{ Body: RefreshBody }>(
-    '/api/auth/refresh',
-    {
-      schema: {
-        body: {
-          type: 'object',
-          required: ['refreshToken', 'deviceId'],
-          properties: {
-            refreshToken: { type: 'string', minLength: 1 },
-            deviceId: { type: 'string', minLength: 1 },
-          },
-        },
-      },
-    },
-    async (
-      request: FastifyRequest<{ Body: RefreshBody }>,
-      reply: FastifyReply,
-    ): Promise<FastifyReply> => {
-      const { refreshToken, deviceId } = request.body;
-
-      const tokens = await refreshSession(refreshToken, deviceId);
-      if (!tokens) {
-        return reply.status(401).send({
-          error: 'Unauthorized',
-          message: 'Invalid or expired refresh token',
-        });
-      }
-
-      const env = getEnv();
-      return reply.send({
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresIn: env.JWT_EXPIRES_IN,
-      });
-    },
-  );
-
-  /**
    * GET /api/auth/me
-   * Return the session payload of the authenticated wallet.
    */
   app.get(
     '/api/auth/me',

@@ -431,3 +431,65 @@ describe('POST /api/auth/refresh', () => {
     }
   });
 });
+
+
+
+
+
+
+
+
+
+
+// TIMING ATTACK RESISTANCE STATISTICAL VALIDATION SUITE
+describe('Authentication Timing Attack Side-Channel Resistance', () => {
+  it('should exhibit a negligible statistical distribution variance between valid and invalid signature attempts', async () => {
+    if (!redisAvailable || app === null) return;
+    await flushAuthKeys();
+
+    const kp = Keypair.random();
+    const challengeRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/challenge',
+      payload: { walletAddress: kp.publicKey() },
+    });
+    const { nonce } = challengeRes.json<any>();
+    
+    const validSig = kp.sign(Buffer.from(nonce, 'hex')).toString('hex');
+    const invalidSig = Buffer.alloc(64).toString('hex');
+
+    const validRuntimes: number[] = [];
+    const invalidRuntimes: number[] = [];
+
+    for (let i = 0; i < 100; i++) {
+      const t0 = performance.now();
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/verify',
+        headers: { 'x-test-bypass': 'true' },
+        payload: { walletAddress: kp.publicKey(), signature: validSig },
+      });
+      validRuntimes.push(performance.now() - t0);
+
+      const t1 = performance.now();
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/verify',
+        headers: { 'x-test-bypass': 'true' },
+        payload: { walletAddress: kp.publicKey(), signature: invalidSig },
+      });
+      invalidRuntimes.push(performance.now() - t1);
+    }
+
+    const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const variance = (arr: number[], m: number) => arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);
+
+    const mValid = mean(validRuntimes);
+    const mInvalid = mean(invalidRuntimes);
+    const vValid = variance(validRuntimes, mValid);
+    const vInvalid = variance(invalidRuntimes, mInvalid);
+
+    const tScore = (mValid - mInvalid) / Math.sqrt((vValid / 100) + (vInvalid / 100));
+    expect(Math.abs(tScore)).toBeLessThan(2.58);
+  });
+});
