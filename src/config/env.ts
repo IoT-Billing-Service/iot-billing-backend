@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { compactPath, formatZodIssues } from '../core/utils/zod_path.js';
 
 dotenv.config();
 
@@ -35,40 +36,19 @@ export interface EnvValidationIssue {
 }
 
 /**
- * Join a Zod issue path into a stable, readable string, rendering numeric
- * (array index) segments in bracket notation: `["a", 2, "b"]` -> `"a[2].b"`.
- *
- * This keeps logged paths short and unambiguous without ever truncating them,
- * which is what defeated debugging in the deeply nested case described by
- * issue #69. An empty path (a root-level error) renders as `"(root)"`.
- */
-export function compactPath(path: readonly (string | number)[]): string {
-  let out = '';
-  for (const segment of path) {
-    if (typeof segment === 'number') {
-      out += `[${String(segment)}]`;
-    } else {
-      out += out === '' ? segment : `.${segment}`;
-    }
-  }
-  return out === '' ? '(root)' : out;
-}
-
-/**
  * Convert a {@link z.ZodError} into one structured entry per issue.
  *
  * Unlike `error.flatten()`, this preserves the issue `code` and the full,
  * compacted path for *every* failure, so no failing field is collapsed away or
  * hidden behind truncation. Callers can log each entry as its own structured
- * record.
+ * record. Built on the shared {@link formatZodIssues} helper.
  */
 export function formatEnvIssues(error: z.ZodError): EnvValidationIssue[] {
-  return error.issues.map((issue) => ({
-    path: compactPath(issue.path),
-    code: issue.code,
-    message: issue.message,
-  }));
+  return formatZodIssues(error).map(({ path, code, message }) => ({ path, code, message }));
 }
+
+// Re-exported so existing callers (and tests) can import the path helper here.
+export { compactPath };
 
 let cachedEnv: Env | null = null;
 
