@@ -6,6 +6,7 @@ import {
   verifyChallenge,
   issueSessionTokens,
   isValidStellarAddress,
+  refreshSession,
 } from '../auth/session.js';
 import { verifyJwt } from '../middleware/auth.js';
 
@@ -39,7 +40,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         },
       },
     },
-    async (request: FastifyRequest<{ Body: ChallengeBody }>, reply: FastifyReply): Promise<FastifyReply> => {
+    async (
+      request: FastifyRequest<{ Body: ChallengeBody }>,
+      reply: FastifyReply,
+    ): Promise<FastifyReply> => {
       const { walletAddress } = request.body;
 
       if (!isValidStellarAddress(walletAddress)) {
@@ -85,7 +89,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         },
       },
     },
-    async (request: FastifyRequest<{ Body: VerifyBody }>, reply: FastifyReply): Promise<FastifyReply> => {
+    async (
+      request: FastifyRequest<{ Body: VerifyBody }>,
+      reply: FastifyReply,
+    ): Promise<FastifyReply> => {
       const { walletAddress, signature } = request.body;
 
       if (!isValidStellarAddress(walletAddress)) {
@@ -99,16 +106,19 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       const valid = await verifyChallenge(walletAddress, signature);
 
       const env = getEnv();
-      const deviceId: string = typeof request.body.deviceId === 'string' ? request.body.deviceId : '';
-
+      const deviceId: string =
+        typeof request.body.deviceId === 'string' ? request.body.deviceId : '';
 
       const realTokens = await issueSessionTokens(walletAddress, deviceId);
-      const dummyTokens = await issueSessionTokens('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', deviceId);
-      
+      const dummyTokens = await issueSessionTokens(
+        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        deviceId,
+      );
+
       const tokens = valid ? realTokens : dummyTokens;
 
       const executionElapsed = performance.now() - startExecution;
-      const TARGET_PADDING_MS = 3.0; 
+      const TARGET_PADDING_MS = 3.0;
       if (executionElapsed < TARGET_PADDING_MS) {
         const delayPadding = TARGET_PADDING_MS - executionElapsed;
         await new Promise((resolve) => setTimeout(resolve, delayPadding));
@@ -148,6 +158,36 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         sub: request.session.sub,
         iat: request.session.iat,
         exp: request.session.exp,
+      });
+    },
+  );
+
+  /**
+   * POST /api/auth/refresh
+   */
+  app.post<{ Body: { refreshToken: string; deviceId: string } }>(
+    '/api/auth/refresh',
+    { preHandler: applyAuthRateLimiting },
+    async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+      const body = request.body as { refreshToken?: unknown; deviceId?: unknown };
+      const refreshToken = typeof body.refreshToken === 'string' ? body.refreshToken : null;
+      const deviceId = typeof body.deviceId === 'string' ? body.deviceId : null;
+      if (refreshToken === null || deviceId === null) {
+        return reply.status(400).send({
+          error: 'Bad Request',
+          message: 'refreshToken and deviceId are required',
+        });
+      }
+      const tokens = await refreshSession(refreshToken, deviceId);
+      if (!tokens) {
+        return reply.status(401).send({
+          error: 'Unauthorized',
+          message: 'Invalid or expired refresh token',
+        });
+      }
+      return reply.send({
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
       });
     },
   );
