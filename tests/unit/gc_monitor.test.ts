@@ -72,7 +72,6 @@ vi.mock('../../src/config/env.js', () => ({
   })),
 }));
 
-
 describe('GcPauseMonitor', () => {
   let collectSpy: MockInstance;
 
