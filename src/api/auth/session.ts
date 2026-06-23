@@ -9,8 +9,25 @@ import { getRedis } from '../../database/redis.js';
 export interface SessionPayload {
   sub: string;
   wallet: string;
+  session_id: string;
+  version: number;
   iat: number;
   exp: number;
+}
+
+export interface RefreshTokenPayload {
+  sub: string;
+  wallet: string;
+  session_id: string;
+  device_id: string;
+  version: number;
+  iat: number;
+  exp: number;
+}
+
+export interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
 }
 
 export interface ChallengeResult {
@@ -175,22 +192,128 @@ export async function verifyChallenge(
   return verifyEd25519Signature(nonce, signatureHex, publicKey);
 }
 
-export function issueSessionToken(walletAddress: string): string {
+export async function issueSessionTokens(
+  walletAddress: string,
+  deviceId: string,
+): Promise<TokenPair> {
   const env = getEnv();
+  const redis = getRedis();
+  const sessionId = crypto.randomUUID();
+  const version = 1;
+
+  const sessionKey = `auth:session:${sessionId}`;
+  await redis.hset(sessionKey, {
+    wallet: walletAddress,
+    device_id: deviceId,
+    token_version: version.toString(),
+  });
+  await redis.expire(sessionKey, 7 * 24 * 60 * 60);
+
   const payload: Omit<SessionPayload, 'iat' | 'exp'> = {
     sub: walletAddress,
     wallet: walletAddress,
+    session_id: sessionId,
+    version,
   };
-  const opts: SignOptions = {
+  const accessOpts: SignOptions = {
     expiresIn: env.JWT_EXPIRES_IN as string & SignOptions['expiresIn'],
   };
-  return jwt.sign(payload, env.JWT_SECRET, opts);
+  const accessToken = jwt.sign(payload, env.JWT_SECRET, accessOpts);
+
+  const refreshPayload: Omit<RefreshTokenPayload, 'iat' | 'exp'> = {
+    ...payload,
+    device_id: deviceId,
+  };
+  const refreshOpts: SignOptions = {
+    expiresIn: env.JWT_REFRESH_EXPIRES_IN as string & SignOptions['expiresIn'],
+  };
+  const refreshToken = jwt.sign(refreshPayload, env.JWT_SECRET, refreshOpts);
+
+  return { accessToken, refreshToken };
 }
 
-export function verifySessionToken(token: string): SessionPayload | null {
+export async function refreshSession(
+  refreshToken: string,
+  deviceId: string,
+): Promise<TokenPair | null> {
+  const env = getEnv();
+  const redis = getRedis();
+
+  let decoded: RefreshTokenPayload;
+  try {
+    decoded = jwt.verify(refreshToken, env.JWT_SECRET) as RefreshTokenPayload;
+  } catch {
+    return null;
+  }
+
+  if (decoded.device_id !== deviceId) {
+    return null;
+  }
+
+  const sessionId = decoded.session_id;
+  const version = decoded.version;
+
+  const lockKey = `refresh_lock:${sessionId}`;
+  await redis.set(lockKey, '1', 'EX', 10);
+
+  let resultTokens: TokenPair | null = null;
+
+  try {
+    const cooldownKey = `auth:session:${sessionId}:cooldown`;
+    const cachedTokens = await redis.get(cooldownKey);
+    if (cachedTokens !== null) {
+      resultTokens = JSON.parse(cachedTokens) as TokenPair;
+      return resultTokens;
+    }
+
+    const sessionKey = `auth:session:${sessionId}`;
+    const sessionData = await redis.hgetall(sessionKey);
+    if (Object.keys(sessionData).length === 0) {
+      return null;
+    }
+
+    const storedVersion = parseInt(sessionData['token_version'] ?? '1', 10);
+    if (version < storedVersion - 1) {
+      return null;
+    }
+
+    const newVersion = storedVersion + 1;
+    await redis.hset(sessionKey, { token_version: newVersion.toString() });
+
+    const payload: Omit<SessionPayload, 'iat' | 'exp'> = {
+      sub: decoded.wallet,
+      wallet: decoded.wallet,
+      session_id: sessionId,
+      version: newVersion,
+    };
+    const accessOpts: SignOptions = {
+      expiresIn: env.JWT_EXPIRES_IN as string & SignOptions['expiresIn'],
+    };
+    const accessToken = jwt.sign(payload, env.JWT_SECRET, accessOpts);
+
+    const refreshPayload: Omit<RefreshTokenPayload, 'iat' | 'exp'> = {
+      ...payload,
+      device_id: deviceId,
+    };
+    const refreshOpts: SignOptions = {
+      expiresIn: env.JWT_REFRESH_EXPIRES_IN as string & SignOptions['expiresIn'],
+    };
+    const newRefreshToken = jwt.sign(refreshPayload, env.JWT_SECRET, refreshOpts);
+
+    const tokens = { accessToken, refreshToken: newRefreshToken };
+    await redis.set(cooldownKey, JSON.stringify(tokens), 'EX', 5);
+
+    resultTokens = tokens;
+    return resultTokens;
+  } finally {
+    await redis.del(lockKey);
+  }
+}
+
+export function verifySessionToken(token: string, ignoreExpiration = false): SessionPayload | null {
   const env = getEnv();
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET) as SessionPayload;
+    const decoded = jwt.verify(token, env.JWT_SECRET, { ignoreExpiration }) as SessionPayload;
     return decoded;
   } catch {
     return null;

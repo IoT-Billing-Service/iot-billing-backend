@@ -3,7 +3,8 @@ import { getEnv } from '../../config/env.js';
 import {
   generateChallenge,
   verifyChallenge,
-  issueSessionToken,
+  issueSessionTokens,
+  refreshSession,
   isValidStellarAddress,
 } from '../auth/session.js';
 import { verifyJwt } from '../middleware/auth.js';
@@ -15,6 +16,12 @@ interface ChallengeBody {
 interface VerifyBody {
   walletAddress: string;
   signature: string;
+  deviceId: string;
+}
+
+interface RefreshBody {
+  refreshToken: string;
+  deviceId: string;
 }
 
 const STELLAR_ADDRESS_PATTERN = '^G[A-Z2-7]{55}$';
@@ -82,6 +89,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
           properties: {
             walletAddress: { type: 'string', pattern: STELLAR_ADDRESS_PATTERN },
             signature: { type: 'string', pattern: SIGNATURE_HEX_PATTERN },
+            deviceId: { type: 'string', minLength: 1 },
           },
         },
       },
@@ -90,7 +98,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       request: FastifyRequest<{ Body: VerifyBody }>,
       reply: FastifyReply,
     ): Promise<FastifyReply> => {
-      const { walletAddress, signature } = request.body;
+      const { walletAddress, signature, deviceId } = request.body;
 
       if (!isValidStellarAddress(walletAddress)) {
         return reply.status(400).send({
@@ -108,10 +116,52 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       }
 
       const env = getEnv();
-      const token = issueSessionToken(walletAddress);
+      const tokens = await issueSessionTokens(walletAddress, deviceId);
       return reply.send({
-        token,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
         walletAddress,
+        expiresIn: env.JWT_EXPIRES_IN,
+      });
+    },
+  );
+
+  /**
+   * POST /api/auth/refresh
+   * Rotate the session tokens using a valid refresh token.
+   */
+  app.post<{ Body: RefreshBody }>(
+    '/api/auth/refresh',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['refreshToken', 'deviceId'],
+          properties: {
+            refreshToken: { type: 'string', minLength: 1 },
+            deviceId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Body: RefreshBody }>,
+      reply: FastifyReply,
+    ): Promise<FastifyReply> => {
+      const { refreshToken, deviceId } = request.body;
+
+      const tokens = await refreshSession(refreshToken, deviceId);
+      if (!tokens) {
+        return reply.status(401).send({
+          error: 'Unauthorized',
+          message: 'Invalid or expired refresh token',
+        });
+      }
+
+      const env = getEnv();
+      return reply.send({
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
         expiresIn: env.JWT_EXPIRES_IN,
       });
     },

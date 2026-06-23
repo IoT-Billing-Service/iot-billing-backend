@@ -17,6 +17,7 @@ const envSchema = z.object({
   ADMIN_SECRET_KEY: z.string().optional(),
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('15m'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   CHALLENGE_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
   OTEL_SERVICE_NAME: z.string().default('iot-billing-backend'),
