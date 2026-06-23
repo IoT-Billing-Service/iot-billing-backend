@@ -261,18 +261,18 @@ export async function refreshSession(
   try {
     const cooldownKey = `auth:session:${sessionId}:cooldown`;
     const cachedTokens = await redis.get(cooldownKey);
-    if (cachedTokens) {
+    if (cachedTokens !== null) {
       resultTokens = JSON.parse(cachedTokens) as TokenPair;
       return resultTokens;
     }
 
     const sessionKey = `auth:session:${sessionId}`;
     const sessionData = await redis.hgetall(sessionKey);
-    if (!sessionData || Object.keys(sessionData).length === 0) {
+    if (Object.keys(sessionData).length === 0) {
       return null;
     }
 
-    const storedVersion = parseInt(sessionData.token_version || '1', 10);
+    const storedVersion = parseInt(sessionData['token_version'] ?? '1', 10);
     if (version < storedVersion - 1) {
       return null;
     }

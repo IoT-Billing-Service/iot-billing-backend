@@ -328,11 +328,12 @@ describe('GET /api/auth/me', () => {
 describe('POST /api/auth/refresh', () => {
   it('should refresh tokens and handle 5 concurrent refresh requests for the same session', async () => {
     if (!redisAvailable || app === null) return;
+    const testApp = app;
     await flushAuthKeys();
 
     // 1. Initial Auth
     const kp = Keypair.random();
-    const challengeRes = await app.inject({
+    const challengeRes = await testApp.inject({
       method: 'POST',
       url: '/api/auth/challenge',
       payload: { walletAddress: kp.publicKey() },
@@ -340,7 +341,7 @@ describe('POST /api/auth/refresh', () => {
     const { nonce } = challengeRes.json<ChallengeBody>();
     const sig = kp.sign(Buffer.from(nonce, 'hex'));
 
-    const verifyRes = await app.inject({
+    const verifyRes = await testApp.inject({
       method: 'POST',
       url: '/api/auth/verify',
       payload: {
@@ -360,7 +361,7 @@ describe('POST /api/auth/refresh', () => {
     };
 
     const refreshPromises = Array.from({ length: 5 }).map(() =>
-      app!.inject({
+      testApp.inject({
         method: 'POST',
         url: '/api/auth/refresh',
         payload: refreshPayload,
@@ -380,21 +381,25 @@ describe('POST /api/auth/refresh', () => {
 
     // They should all return the exact same new token pair because of the 5s cooldown
     const firstRefresh = jsonResponses[0];
+    if (!firstRefresh) {
+      throw new Error('No refresh response received');
+    }
+
     for (const jr of jsonResponses) {
       expect(jr.accessToken).toBe(firstRefresh.accessToken);
       expect(jr.refreshToken).toBe(firstRefresh.refreshToken);
     }
 
     // Ensure the new access token works
-    const meRes = await app!.inject({
+    const meRes = await testApp.inject({
       method: 'GET',
       url: '/api/auth/me',
       headers: { authorization: `Bearer ${firstRefresh.accessToken}` },
     });
     expect(meRes.statusCode).toBe(200);
 
-    // 3. Trying to refresh with the original refresh token again should fail after the 5s cooldown.
-    // However, since we don't want to wait 5s in a test, we can just assert that if we clear the cooldown cache, it fails.
+    // 3. Late refresh: Using the original refresh token outside of cooldown window.
+    // The version is 1, stored version is 2. Since 1 >= 2 - 1, it allows it (window of 1) and increments to 3.
     const redis = new Redis(redisUrl);
     try {
       const keys = await redis.keys('auth:session:*:cooldown');
@@ -402,13 +407,25 @@ describe('POST /api/auth/refresh', () => {
         await redis.del(...keys);
       }
 
-      const lateRefresh = await app!.inject({
+      const lateRefresh = await testApp.inject({
         method: 'POST',
         url: '/api/auth/refresh',
         payload: refreshPayload, // the original refresh token
       });
-      // Window of 1 prevents this since the version was already incremented
-      expect(lateRefresh.statusCode).toBe(401);
+      // Window of 1 allows this, returning 200
+      expect(lateRefresh.statusCode).toBe(200);
+
+      // 4. Too late refresh: Using the original refresh token AGAIN.
+      // The version is 1, stored version is now 3. Since 1 >= 3 - 1 (1 >= 2) is false, it rejects.
+      if (keys.length > 0) {
+        await redis.del(...keys);
+      }
+      const tooLateRefresh = await testApp.inject({
+        method: 'POST',
+        url: '/api/auth/refresh',
+        payload: refreshPayload,
+      });
+      expect(tooLateRefresh.statusCode).toBe(401);
     } finally {
       redis.disconnect();
     }

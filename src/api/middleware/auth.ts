@@ -41,7 +41,7 @@ export async function verifyJwt(request: FastifyRequest, reply: FastifyReply): P
   if (payload === null) {
     // Check if it's just expired but a refresh is in progress
     const expiredPayload = verifySessionToken(token, true);
-    if (expiredPayload !== null && expiredPayload.session_id) {
+    if (expiredPayload?.session_id != null) {
       const redis = getRedis();
       const lockKey = `refresh_lock:${expiredPayload.session_id}`;
       const isLocked = await redis.exists(lockKey);
