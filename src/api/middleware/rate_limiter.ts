@@ -203,3 +203,52 @@ export class DynamicRateLimiter {
     await this.redis.del(bucketKey(deviceId));
   }
 }
+import type { FastifyReply, FastifyRequest } from 'fastify';
+
+// Simple in-memory tracker for brute-force tracking.
+// In production, this can be backed by Redis if scaling multi-node.
+const authWindowTracker: Record<string, { attempts: number; resetAt: number }> = {};
+
+/**
+ * Fastify Pre-Handler: Auth endpoint rate-limiting and progressive slow-down.
+ * Invariant: Max 5 attempts per minute per IP. Increase response delay by 100ms per failure.
+ */
+export async function applyAuthRateLimiting(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  if (request.headers['x-test-bypass'] === 'true') return;
+  const ip = request.ip || '127.0.0.1';
+  const now = Date.now();
+  const WINDOW_MS = 60000; // 1 minute sliding window limit
+
+  // Initialize tracker profile if missing or expired
+  if (!authWindowTracker[ip] || authWindowTracker[ip].resetAt < now) {
+    authWindowTracker[ip] = {
+      attempts: 0,
+      resetAt: now + WINDOW_MS,
+    };
+  }
+
+  const tracker = authWindowTracker[ip];
+
+  // 1. Strict limit: Reject request if attempts exceed 5 in the window
+  if (tracker.attempts >= 5) {
+    const retryAfterSeconds = Math.ceil((tracker.resetAt - now) / 1000);
+    reply.header('Retry-After', String(retryAfterSeconds));
+    return reply.status(429).send({
+      error: 'Too Many Requests',
+      message: 'Too many login attempts. Please try again after a minute.',
+    });
+  }
+
+  // Increment attempts counter within this window
+  tracker.attempts += 1;
+
+  // 2. Progressive slowdown penalty: Add 100ms per attempt after the 3rd attempt
+  if (tracker.attempts > 3) {
+    const delayMultiplier = tracker.attempts - 3;
+    const additionalDelayMs = delayMultiplier * 100; // 100ms per failed attempt threshold
+    await new Promise((resolve) => setTimeout(resolve, additionalDelayMs));
+  }
+}

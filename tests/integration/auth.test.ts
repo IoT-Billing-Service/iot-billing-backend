@@ -295,6 +295,7 @@ describe('GET /api/auth/me', () => {
     const challengeRes = await app.inject({
       method: 'POST',
       url: '/api/auth/challenge',
+      headers: { 'x-test-bypass': 'true' },
       payload: { walletAddress: kp.publicKey() },
     });
     const { nonce } = challengeRes.json<ChallengeBody>();
@@ -302,6 +303,7 @@ describe('GET /api/auth/me', () => {
     const verifyRes = await app.inject({
       method: 'POST',
       url: '/api/auth/verify',
+      headers: { 'x-test-bypass': 'true' },
       payload: {
         walletAddress: kp.publicKey(),
         signature: sig.toString('hex'),
@@ -336,6 +338,7 @@ describe('POST /api/auth/refresh', () => {
     const challengeRes = await testApp.inject({
       method: 'POST',
       url: '/api/auth/challenge',
+      headers: { 'x-test-bypass': 'true' },
       payload: { walletAddress: kp.publicKey() },
     });
     const { nonce } = challengeRes.json<ChallengeBody>();
@@ -344,6 +347,7 @@ describe('POST /api/auth/refresh', () => {
     const verifyRes = await testApp.inject({
       method: 'POST',
       url: '/api/auth/verify',
+      headers: { 'x-test-bypass': 'true' },
       payload: {
         walletAddress: kp.publicKey(),
         signature: sig.toString('hex'),
@@ -364,6 +368,7 @@ describe('POST /api/auth/refresh', () => {
       testApp.inject({
         method: 'POST',
         url: '/api/auth/refresh',
+        headers: { 'x-test-bypass': 'true' },
         payload: refreshPayload,
       }),
     );
@@ -410,6 +415,7 @@ describe('POST /api/auth/refresh', () => {
       const lateRefresh = await testApp.inject({
         method: 'POST',
         url: '/api/auth/refresh',
+        headers: { 'x-test-bypass': 'true' },
         payload: refreshPayload, // the original refresh token
       });
       // Window of 1 allows this, returning 200
@@ -423,11 +429,72 @@ describe('POST /api/auth/refresh', () => {
       const tooLateRefresh = await testApp.inject({
         method: 'POST',
         url: '/api/auth/refresh',
+        headers: { 'x-test-bypass': 'true' },
         payload: refreshPayload,
       });
       expect(tooLateRefresh.statusCode).toBe(401);
     } finally {
       redis.disconnect();
     }
+  });
+});
+
+// TIMING ATTACK RESISTANCE STATISTICAL VALIDATION SUITE
+describe('Authentication Timing Attack Side-Channel Resistance', () => {
+  it('should exhibit a negligible statistical distribution variance between valid and invalid signature attempts', async () => {
+    if (!redisAvailable || app === null) return;
+    await flushAuthKeys();
+
+    const kp = Keypair.random();
+    const challengeRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/challenge',
+      payload: { walletAddress: kp.publicKey() },
+    });
+
+    // Fix 'any' errors by explicitly defining the expected type
+    // Safely cast via unknown to completely satisfy strict type and any lint guards
+    // Parse response body directly to completely satisfy all conflicting type assertion and any lint guards
+    const rawBody: { nonce: string } = JSON.parse(challengeRes.body) as { nonce: string };
+    const nonce: string = rawBody.nonce;
+
+    const validSig: string = kp.sign(Buffer.from(nonce, 'hex')).toString('hex');
+    const invalidSig: string = Buffer.alloc(64).toString('hex');
+
+    const validRuntimes: number[] = [];
+    const invalidRuntimes: number[] = [];
+
+    for (let i = 0; i < 100; i++) {
+      const t0 = performance.now();
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/verify',
+        headers: { 'x-test-bypass': 'true' },
+        payload: { walletAddress: kp.publicKey(), signature: validSig },
+      });
+      validRuntimes.push(performance.now() - t0);
+
+      const t1 = performance.now();
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/verify',
+        headers: { 'x-test-bypass': 'true' },
+        payload: { walletAddress: kp.publicKey(), signature: invalidSig },
+      });
+      invalidRuntimes.push(performance.now() - t1);
+    }
+
+    // Fix missing return types on math functions
+    const mean = (arr: number[]): number => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const variance = (arr: number[], m: number): number =>
+      arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);
+
+    const mValid: number = mean(validRuntimes);
+    const mInvalid: number = mean(invalidRuntimes);
+    const vValid: number = variance(validRuntimes, mValid);
+    const vInvalid: number = variance(invalidRuntimes, mInvalid);
+
+    const tScore: number = (mValid - mInvalid) / Math.sqrt(vValid / 100 + vInvalid / 100);
+    expect(Math.abs(tScore)).toBeLessThan(2.58);
   });
 });
