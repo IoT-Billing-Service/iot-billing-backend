@@ -8,18 +8,21 @@ import type pg from 'pg';
  * real PostgreSQL database.
  */
 function makeMockPool(): pg.Pool {
-  const clients: Array<{
+  interface MockClient {
     id: number;
     released: boolean;
-  }> = [];
+    query: () => Promise<{ rows: { locked: boolean }[] }>;
+    release: () => void;
+  }
+  const clients: MockClient[] = [];
   let nextId = 0;
 
-  const createClient = () => {
+  const createClient = (): MockClient => {
     const id = nextId++;
-    const client = {
+    const client: MockClient = {
       id,
       released: false,
-      query: async () => ({ rows: [{ locked: true }] }),
+      query: () => Promise.resolve({ rows: [{ locked: true }] }),
       release: () => {
         client.released = true;
       },
@@ -28,7 +31,7 @@ function makeMockPool(): pg.Pool {
     return client;
   };
 
-  const connect = vi.fn(async () => createClient());
+  const connect = vi.fn(() => Promise.resolve(createClient()));
 
   return {
     connect,
@@ -61,6 +64,8 @@ describe('AdvisoryLockManager listener leak prevention', () => {
     // Explicit release should clean up
     await manager.releaseLockById(result.lockId);
     expect(manager.getEventListenerCount()).toBe(0);
+    // Dummy reference to avoid unused-vars lint
+    void expiredCalled;
   });
 
   it('should clean up listeners on auto-expiry', async () => {
@@ -90,14 +95,18 @@ describe('AdvisoryLockManager listener leak prevention', () => {
 
     // Acquire 100 locks with per-lock listeners
     for (let i = 0; i < 100; i++) {
-      const result = await manager.acquireLock(`dev-${i}`, 1000 + i, {
+      const result = await manager.acquireLock(`dev-${String(i)}`, 1000 + i, {
         ttlMs: i < 50 ? 50 : 30000,
       });
       expect(result.acquired).toBe(true);
       lockIds.push(result.lockId);
 
-      manager.onExpired(result.lockId, () => {});
-      manager.onReleased(result.lockId, () => {});
+      manager.onExpired(result.lockId, () => {
+        /* noop — listener cleanup test */
+      });
+      manager.onReleased(result.lockId, () => {
+        /* noop — listener cleanup test */
+      });
     }
 
     expect(manager.getEventListenerCount()).toBe(200); // 2 listeners per lock
@@ -127,8 +136,12 @@ describe('AdvisoryLockManager listener leak prevention', () => {
     const result = await manager.acquireLock('dev-mix', 5000, { ttlMs: 100 });
     expect(result.acquired).toBe(true);
 
-    manager.onExpired(result.lockId, () => {});
-    manager.onReleased(result.lockId, () => {});
+    manager.onExpired(result.lockId, () => {
+      /* noop — listener cleanup test */
+    });
+    manager.onReleased(result.lockId, () => {
+      /* noop — listener cleanup test */
+    });
     expect(manager.getEventListenerCount()).toBe(2);
 
     // release before expiry

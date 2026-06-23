@@ -192,20 +192,30 @@ export class AdvisoryLockManager extends EventEmitter {
     lockId: number,
     handler: (payload: { lockId: number }) => void,
   ): void {
-    const wrapped = (payload: { lockId: number }) => {
+    const wrapped = (payload: { lockId: number }): void => {
       if (payload.lockId === lockId) {
         handler(payload);
         this.removeLockListeners(lockId);
       }
     };
     this.on('lockExpired', wrapped);
-    if (!this.lockListenerIndex.has(lockId)) {
-      this.lockListenerIndex.set(lockId, { lockId, listeners: [] });
+    const existing = this.lockListenerIndex.get(lockId);
+    if (existing) {
+      existing.listeners.push({
+        event: 'lockExpired',
+        handler: wrapped as (...args: unknown[]) => void,
+      });
+    } else {
+      this.lockListenerIndex.set(lockId, {
+        lockId,
+        listeners: [
+          {
+            event: 'lockExpired',
+            handler: wrapped as (...args: unknown[]) => void,
+          },
+        ],
+      });
     }
-    this.lockListenerIndex.get(lockId)!.listeners.push({
-      event: 'lockExpired',
-      handler: wrapped as (...args: unknown[]) => void,
-    });
   }
 
   /**
@@ -216,20 +226,30 @@ export class AdvisoryLockManager extends EventEmitter {
     lockId: number,
     handler: (payload: { lockId: number }) => void,
   ): void {
-    const wrapped = (payload: { lockId: number }) => {
+    const wrapped = (payload: { lockId: number }): void => {
       if (payload.lockId === lockId) {
         handler(payload);
         this.removeLockListeners(lockId);
       }
     };
     this.on('lockReleased', wrapped);
-    if (!this.lockListenerIndex.has(lockId)) {
-      this.lockListenerIndex.set(lockId, { lockId, listeners: [] });
+    const existing = this.lockListenerIndex.get(lockId);
+    if (existing) {
+      existing.listeners.push({
+        event: 'lockReleased',
+        handler: wrapped as (...args: unknown[]) => void,
+      });
+    } else {
+      this.lockListenerIndex.set(lockId, {
+        lockId,
+        listeners: [
+          {
+            event: 'lockReleased',
+            handler: wrapped as (...args: unknown[]) => void,
+          },
+        ],
+      });
     }
-    this.lockListenerIndex.get(lockId)!.listeners.push({
-      event: 'lockReleased',
-      handler: wrapped as (...args: unknown[]) => void,
-    });
   }
 
   /** Remove all registered per-lock listeners for a given lockId. */
