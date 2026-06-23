@@ -172,6 +172,20 @@ export const ledgerSyncPollErrors: promClient.Counter = new promClient.Counter({
   labelNames: ['sync_id', 'phase'],
 });
 
+// Ledger event-bus continuity (issue #48). Before this change, cross-process
+// ledger notifications used Redis pub/sub, which silently dropped every message
+// published during a sentinel failover (no subscribers on the new leader). The
+// bus now uses durable Redis Streams + consumer groups, but we still track any
+// sequence discontinuity observed at consume time so a regression is visible.
+// The counter is incremented by the number of missing sequences each time a gap
+// is detected; the legacy `redis_pubsub_messages_lost_total` name is retained so
+// existing dashboards/alerts continue to work.
+export const redisPubsubMessagesLost: promClient.Counter = new promClient.Counter({
+  name: 'redis_pubsub_messages_lost_total',
+  help: 'Ledger events detected as missing via consumer-group sequence-gap detection',
+  labelNames: ['stream'],
+});
+
 // Setters -----------------------------------------------------------------------
 
 export function setTenantPoolActiveConnections(tenantId: string, count: number): void {
@@ -239,6 +253,12 @@ export function setLedgerSyncMetrics(metrics: LedgerSyncMetrics): void {
 
 export function recordLedgerSyncPollError(syncId: string, phase: 'poll' | 'fetch'): void {
   ledgerSyncPollErrors.inc({ sync_id: syncId, phase });
+}
+
+export function recordRedisPubsubMessagesLost(stream: string, count: number): void {
+  if (Number.isFinite(count) && count > 0) {
+    redisPubsubMessagesLost.inc({ stream }, count);
+  }
 }
 
 // Metrics endpoint -------------------------------------------------------------
