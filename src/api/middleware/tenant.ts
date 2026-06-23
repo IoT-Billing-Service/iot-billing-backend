@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { PoolContentionError, getTenantPoolProxy } from '../../database/pool_manager.js';
+import { enterTenantContext, setCurrentTenantRequest } from '../../config/index.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -21,6 +22,8 @@ export async function extractTenantId(request: FastifyRequest, reply: FastifyRep
   }
 
   request.tenantId = raw.trim();
+  setCurrentTenantRequest(request);
+  enterTenantContext(request.tenantId, request);
 }
 
 /**

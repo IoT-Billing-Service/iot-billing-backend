@@ -33,7 +33,9 @@ vi.mock('../../src/api/middleware/tenant.js', async (importOriginal) => {
   return {
     ...actual,
     extractTenantId: async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
-      request.tenantId = 'test-tenant';
+      const raw = request.headers['x-tenant-id'];
+      request.tenantId =
+        typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : 'test-tenant';
       await Promise.resolve();
     },
     getTenantPoolProxy: (): { connect: typeof mockConnect } => ({
@@ -182,6 +184,41 @@ describe('Analytics API and Ingestion Trigger', () => {
       });
 
       expect(response.statusCode).toBe(400);
+    });
+
+    it('preserves tenant isolation across simultaneous analytics requests', async () => {
+      const start = new Date('2026-06-20T00:00:00Z').toISOString();
+      const end = new Date('2026-06-20T01:00:00Z').toISOString();
+
+      mockQuery.mockImplementation(async function queryForTenant(this: unknown) {
+        await Promise.all([Promise.resolve(), Promise.resolve(), Promise.resolve()]);
+        return { rows: [{ tenant_id: (this as { tenantId?: string }).tenantId }] };
+      });
+      mockConnect.mockImplementation((tenantId: string) => ({
+        tenantId,
+        query: mockQuery,
+        release: mockRelease,
+      }));
+
+      const [tenantA, tenantB] = await Promise.all([
+        app.inject({
+          method: 'GET',
+          url: `/api/analytics/telemetry?deviceId=dev-001&start=${start}&end=${end}`,
+          headers: { 'x-tenant-id': 'tenant-a' },
+        }),
+        app.inject({
+          method: 'GET',
+          url: `/api/analytics/telemetry?deviceId=dev-001&start=${start}&end=${end}`,
+          headers: { 'x-tenant-id': 'tenant-b' },
+        }),
+      ]);
+
+      expect(tenantA.statusCode).toBe(200);
+      expect(tenantB.statusCode).toBe(200);
+      expect(tenantA.json<AnalyticsResponseBody>().data).toEqual([{ tenant_id: 'tenant-a' }]);
+      expect(tenantB.json<AnalyticsResponseBody>().data).toEqual([{ tenant_id: 'tenant-b' }]);
+      expect(mockConnect).toHaveBeenCalledWith('tenant-a');
+      expect(mockConnect).toHaveBeenCalledWith('tenant-b');
     });
   });
 

@@ -6,6 +6,7 @@ import {
   isPoolContentionError,
   sendPoolContentionResponse,
 } from '../middleware/tenant.js';
+import { assertTenantContextAvailable, tenantContext } from '../../config/index.js';
 
 interface AnalyticsQuery {
   deviceId: string;
@@ -75,7 +76,8 @@ export function registerAnalyticsRoutes(app: FastifyInstance): void {
         viewName = 'weekly_device_usage';
       }
 
-      const tenantId = request.tenantId;
+      assertTenantContextAvailable();
+      const tenantId = tenantContext() ?? request.tenantId;
       if (tenantId === undefined) {
         await reply.status(400).send({
           error: 'Bad Request',

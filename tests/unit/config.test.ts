@@ -87,3 +87,28 @@ describe('formatEnvIssues', () => {
     expect(issues[0]?.path.length).toBeGreaterThan(256);
   });
 });
+
+describe('tenantContext', () => {
+  it('returns the AsyncLocalStorage tenant while the context is active', async () => {
+    const { runWithTenantContext, tenantContext } = await import('../../src/config/index.js');
+
+    const tenantId = runWithTenantContext('tenant-a', () => tenantContext());
+
+    expect(tenantId).toBe('tenant-a');
+  });
+
+  it('falls back to the current request x-tenant-id header when ALS is unavailable', async () => {
+    const { setCurrentTenantRequest, clearCurrentTenantRequest, tenantContext } =
+      await import('../../src/config/index.js');
+    const request = {
+      headers: { 'x-tenant-id': 'tenant-from-header' },
+    };
+
+    setCurrentTenantRequest(request as never);
+    try {
+      expect(tenantContext()).toBe('tenant-from-header');
+    } finally {
+      clearCurrentTenantRequest(request as never);
+    }
+  });
+});
