@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { circuitBreakerState, circuitBreakerQueueDepth, eventLoopLag } from './metrics/prometheus.js';
+import {
+  circuitBreakerState,
+  circuitBreakerQueueDepth,
+  eventLoopLag,
+} from './metrics/prometheus.js';
 import pg from 'pg';
 import { Redis } from 'ioredis';
 import { getEnv } from '../config/env.js';

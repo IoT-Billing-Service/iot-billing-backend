@@ -43,7 +43,11 @@ vi.mock('node:perf_hooks', async () => {
 });
 
 import { GcPauseMonitor } from '../../src/api/metrics/gc_monitor.js';
-import { gcPauseDuration, GC_PAUSE_BUCKETS_MS, eventLoopLag } from '../../src/api/metrics/prometheus.js';
+import {
+  gcPauseDuration,
+  GC_PAUSE_BUCKETS_MS,
+  eventLoopLag,
+} from '../../src/api/metrics/prometheus.js';
 import Fastify from 'fastify';
 import { registerReadinessHealthCheck } from '../../src/api/health.js';
 
@@ -58,6 +62,13 @@ vi.mock('pg', () => ({
 vi.mock('ioredis', () => ({
   Redis: vi.fn(() => ({
     ping: vi.fn().mockResolvedValue('PONG'),
+  })),
+}));
+
+vi.mock('../../src/config/env.js', () => ({
+  getEnv: vi.fn(() => ({
+    TIMESCALEDB_URL: 'postgres://localhost/test',
+    REDIS_URL: 'redis://localhost:6379',
   })),
 }));
 
@@ -162,7 +173,7 @@ describe('Health Check GC Simulation', () => {
     expect(JSON.parse(res1.payload).status).toBe('ok');
 
     const startTime = Date.now();
-    
+
     // Simulate GC pause by allocating and collecting memory
     const arr = new Array(1e6).fill('garbage');
     arr.length = 0;
