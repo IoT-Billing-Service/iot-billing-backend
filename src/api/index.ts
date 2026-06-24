@@ -15,6 +15,7 @@ import {
   getSharedPoolManager,
   getTenantPoolProxy,
   type ElasticPoolManager,
+  runMigrationWithDistributedLock,
 } from '../database/pool_manager.js';
 import {
   LedgerEventSynchronizer,
@@ -63,6 +64,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
 async function start(): Promise<void> {
   initTelemetry();
+
+  await runMigrationWithDistributedLock();
 
   const env = getEnv();
   const app = await buildApp();

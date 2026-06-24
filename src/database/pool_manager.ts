@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { getEnv } from '../config/env.js';
+import { Redis } from 'ioredis';
 import {
   recordTenantPoolGrant,
   recordTenantPoolRejection,
@@ -340,10 +341,15 @@ export class TenantAwarePoolProxy {
 }
 
 const TIMESCALE_POOL_NAME = 'timescale';
+const MIGRATION_LOCK_KEY = 'migration_lock';
+const MIGRATION_DONE_KEY = 'migration_done';
+const MIGRATION_LOCK_TTL = 300;
 
 let cachedManager: ElasticPoolManager | null = null;
 let cachedTenantProxy: TenantAwarePoolProxy | null = null;
 let cachedTimescalePool: pg.Pool | null = null;
+let migrationInProgress = false;
+let migrationCompleted = false;
 
 function getPoolManager(): ElasticPoolManager {
   if (cachedManager !== null) {
@@ -396,6 +402,106 @@ export function resetPoolManagerForTests(): void {
   cachedTenantProxy = null;
   cachedManager = null;
   cachedTimescalePool = null;
+  migrationInProgress = false;
+  migrationCompleted = false;
+}
+
+export function isMigrationInProgress(): boolean {
+  return migrationInProgress;
+}
+
+export function isMigrationCompleted(): boolean {
+  return migrationCompleted;
+}
+
+export async function acquireMigrationLock(
+  redisClient: Redis,
+  instanceId: string,
+): Promise<boolean> {
+  const result = await redisClient.set(
+    MIGRATION_LOCK_KEY,
+    instanceId,
+    'PX',
+    MIGRATION_LOCK_TTL * 1000,
+    'NX',
+  );
+  return result === 'OK';
+}
+
+async function waitForMigrationCompletion(redisClient: Redis, timeoutMs: number): Promise<void> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const completed = await redisClient.exists(MIGRATION_DONE_KEY);
+    if (completed) {
+      migrationCompleted = true;
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('Migration completion timeout');
+}
+
+export async function markMigrationCompleted(redisClient: Redis): Promise<void> {
+  await redisClient.set(MIGRATION_DONE_KEY, '1', 'EX', MIGRATION_LOCK_TTL);
+  await redisClient.del(MIGRATION_LOCK_KEY);
+  migrationCompleted = true;
+  migrationInProgress = false;
+}
+
+export async function runMigrationWithDistributedLock(): Promise<void> {
+  const env = getEnv();
+  if (env.SKIP_MIGRATION_ON_STARTUP) {
+    console.log('Skipping migration on startup (SKIP_MIGRATION_ON_STARTUP=true)');
+    return;
+  }
+
+  const redisClient = new Redis(env.REDIS_URL, {
+    maxRetriesPerRequest: 3,
+    commandTimeout: 5000,
+    enableReadyCheck: true,
+    lazyConnect: false,
+  });
+
+  const instanceId = `${env.HOST}-${process.pid.toString()}-${Date.now().toString()}`;
+  console.log(`Attempting to acquire migration lock with instance ID: ${instanceId}`);
+
+  try {
+    const lockAcquired = await acquireMigrationLock(redisClient, instanceId);
+
+    if (lockAcquired) {
+      console.log('Migration lock acquired. Running Prisma migrate deploy...');
+      migrationInProgress = true;
+
+      try {
+        const { exec } = await import('child_process');
+        await new Promise<void>((resolve, reject) => {
+          exec('npx prisma migrate deploy', (error, stdout, stderr) => {
+            if (error) {
+              console.error('Migration failed:', error);
+              console.error('stderr:', stderr);
+              reject(error);
+            } else {
+              console.log('Migration completed successfully:', stdout);
+              resolve();
+            }
+          });
+        });
+
+        await markMigrationCompleted(redisClient);
+        console.log('Migration marked as completed');
+      } catch (error) {
+        await redisClient.del(MIGRATION_LOCK_KEY);
+        migrationInProgress = false;
+        throw error;
+      }
+    } else {
+      console.log('Migration lock already held by another instance. Waiting for completion...');
+      await waitForMigrationCompletion(redisClient, MIGRATION_LOCK_TTL * 1000);
+      console.log('Migration completed by leader instance');
+    }
+  } finally {
+    await redisClient.quit();
+  }
 }
 
 let lastRefreshTime = new Date(Date.now() - 60000);

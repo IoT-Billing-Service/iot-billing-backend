@@ -8,6 +8,7 @@ import pg from 'pg';
 import { Redis } from 'ioredis';
 import { getEnv } from '../config/env.js';
 import { reportHealthCheckCompleted } from './metrics/gc_monitor.js';
+import { isMigrationInProgress } from '../database/pool_manager.js';
 
 interface MetricEntry {
   labels: Partial<Record<string, string | number>>;
@@ -36,6 +37,11 @@ let healthCache: { status: 'ok' | 'error'; timestamp: number } | null = null;
 export function registerReadinessHealthCheck(app: FastifyInstance): void {
   app.get('/health', async (req: FastifyRequest, reply: FastifyReply) => {
     reportHealthCheckCompleted();
+
+    if (isMigrationInProgress()) {
+      void reply.header('Retry-After', '10');
+      return reply.status(503).send({ status: 'error', reason: 'migration_in_progress' });
+    }
 
     const maxLag = 1000;
     const lagMetric = await eventLoopLag.get();
