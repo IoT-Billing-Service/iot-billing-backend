@@ -8,11 +8,12 @@ import type {
   stopConfigWatcher as stopConfigWatcherType,
   BillingTier,
 } from '../../src/config/index.js';
-import type { processBatch as processBatchType, TelemetryEvent } from '../../src/core/ingestion/validator.js';
+import type {
+  processBatch as processBatchType,
+  TelemetryEvent,
+} from '../../src/core/ingestion/validator.js';
 import type { Gauge } from 'prom-client';
 import type { Redis } from 'ioredis';
-
-
 
 beforeAll(() => {
   process.env['DATABASE_URL'] = 'postgresql://localhost:5432/test';
@@ -129,20 +130,20 @@ describe('tenantContext', () => {
 // --- Mock Redis for two-phase commit config tests ---
 class SimpleMockRedis {
   private store = new Map<string, string>();
-  
+
   get(key: string): Promise<string | null> {
     return Promise.resolve(this.store.get(key) ?? null);
   }
-  
+
   set(key: string, value: string): Promise<'OK'> {
     this.store.set(key, value);
     return Promise.resolve('OK');
   }
-  
+
   exists(key: string): Promise<number> {
     return Promise.resolve(this.store.has(key) ? 1 : 0);
   }
-  
+
   rename(src: string, dest: string): Promise<'OK'> {
     const val = this.store.get(src);
     if (val === undefined) {
@@ -197,27 +198,27 @@ describe('Versioned Config and Two-Phase Commit', () => {
 
   it('should support two-phase commit and update current config in watcher', async () => {
     const redis = new SimpleMockRedis() as unknown as Redis;
-    
+
     // Start watcher
     await initializeConfigWatcher(redis, 10);
-    
+
     try {
       const initialConfig = getConfig();
       expect(initialConfig.tiers['TIER_2']?.max).toBe(10000);
-      
+
       const newTiers: Record<string, BillingTier> = {
         TIER_1: { min: 0, max: 500 },
         TIER_2: { min: 501, max: 50000 },
         TIER_3: { min: 50001, max: Infinity },
       };
-      
+
       // Commit new config via 2PC
       const newVersionId = await commitConfig(redis, newTiers, 20);
       expect(newVersionId).toBeDefined();
-      
+
       // Wait for watcher to poll
       await new Promise((resolve) => setTimeout(resolve, 50));
-      
+
       const updatedConfig = getConfig();
       expect(updatedConfig.version_id).toBe(newVersionId);
       expect(updatedConfig.tiers['TIER_2']?.max).toBe(50000);
@@ -228,24 +229,24 @@ describe('Versioned Config and Two-Phase Commit', () => {
 
   it('should re-process the batch and avoid mixed-version processing if config changes mid-batch', async () => {
     const redis = new SimpleMockRedis() as unknown as Redis;
-    
+
     // Start config watcher
     await initializeConfigWatcher(redis, 10);
-    
+
     try {
       const initialConfig = getConfig();
       const initialVersionId = initialConfig.version_id;
-      
+
       // Define a batch of events
       const events: TelemetryEvent[] = [
         { deviceId: 'dev-1', value: 2000 },
         { deviceId: 'dev-2', value: 3000 },
         { deviceId: 'dev-3', value: 4000 },
       ];
-      
+
       // Process batch asynchronously with a delay between items (e.g. 20ms)
       const processPromise = processBatch(events, 20);
-      
+
       // Mid-batch, we update the configuration!
       // Initial: TIER_2 is [1001, 10000]. 2000 is TIER_2.
       // New config: TIER_2 is [1001, 1500]. TIER_3 is [1501, Infinity]. 2000 will be TIER_3.
@@ -254,29 +255,29 @@ describe('Versioned Config and Two-Phase Commit', () => {
         TIER_2: { min: 1001, max: 1500 },
         TIER_3: { min: 1501, max: Infinity },
       };
-      
+
       // We trigger the commit after 15ms so it falls exactly in the middle of processing the 3 events
       await new Promise((resolve) => setTimeout(resolve, 15));
       const newVersionId = await commitConfig(redis, newTiers, 0); // 0 delay for commit in test
-      
+
       // Wait for watcher to pick up the new config (watcher polls every 10ms)
       await new Promise((resolve) => setTimeout(resolve, 15));
-      
+
       const result = await processPromise;
-      
+
       // The result must be processed entirely with the new configuration version
       expect(result.versionId).toBe(newVersionId);
       for (const res of result.results) {
         expect(res.tier).toBe('TIER_3'); // since 2000, 3000, 4000 are all >= 1501, so TIER_3
       }
-      
+
       // Verify that the configTransitionEvents gauge was incremented
       const metricValue = await configTransitionEvents.get();
       const total = metricValue.values.reduce((sum, item) => sum + item.value, 0);
       expect(total).toBeGreaterThanOrEqual(1);
-      
+
       // Make sure the labels on the gauge are correct
-      const transitions = metricValue.values.filter(item => item.value > 0);
+      const transitions = metricValue.values.filter((item) => item.value > 0);
       expect(transitions.length).toBeGreaterThanOrEqual(1);
       const transition = transitions[0];
       expect(transition).toBeDefined();
@@ -289,4 +290,3 @@ describe('Versioned Config and Two-Phase Commit', () => {
     }
   });
 });
-
