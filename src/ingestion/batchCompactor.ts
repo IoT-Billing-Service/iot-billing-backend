@@ -4,7 +4,6 @@ import {
   BATCH_WINDOW_MS,
   BatchState,
   type Batch,
-  batchLockId,
   createBatch,
   getBatch,
   getOpenBatch,
@@ -87,7 +86,7 @@ export async function compactBatch(batchId: string, pool?: pg.Pool): Promise<'ok
 
     try {
       const batch = await getBatch(client, batchId);
-      if (!batch || batch.state !== BatchState.OPEN) return 'skipped';
+      if (batch?.state !== BatchState.OPEN) return 'skipped';
 
       const moved = await transitionBatchState(
         client,
@@ -134,7 +133,7 @@ export async function rotateBatch(deviceId: string, pool?: pg.Pool): Promise<Bat
       // Re-read state under lock to guard against a compactBatch() that snuck
       // in between getOpenBatch and tryAcquireBatchLock.
       const fresh = await getBatch(client, current.id);
-      if (!fresh || fresh.state !== BatchState.OPEN) return null;
+      if (fresh?.state !== BatchState.OPEN) return null;
 
       // The new batch starts exactly where the old one ends — no gap, no overlap.
       const newStart = current.batch_end;

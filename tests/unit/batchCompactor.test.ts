@@ -12,7 +12,6 @@ import type pg from 'pg';
 
 import {
   BatchState,
-  type Batch,
   batchLockId,
   BATCH_WINDOW_MS,
 } from '../../src/ingestion/batchManager.js';
@@ -29,10 +28,10 @@ const BATCH_ID = `${DEVICE_ID}:${String(BATCH_START.getTime())}`;
 let batchState: BatchState;
 
 /** Summaries written via writeSummary → INSERT into telemetry_batch_summaries. */
-const writtenSummaries: Array<{ batch_id: string; batch_start: Date; batch_end: Date }> = [];
+const writtenSummaries: { batch_id: string; batch_start: Date; batch_end: Date }[] = [];
 
 /** New batches created by rotateBatch → INSERT into telemetry_batches. */
-const createdBatches: Array<{ id: string; batch_start: Date; batch_end: Date }> = [];
+const createdBatches: { id: string; batch_start: Date; batch_end: Date }[] = [];
 
 /** Advisory lock: true = held, false = free. */
 let advisoryLock = false;
@@ -42,7 +41,7 @@ let advisoryLock = false;
  * simulate the minimal DB surface used by batchManager + telemetryStore.
  */
 function makeMockClient(): pg.PoolClient {
-  const query: Mock = vi.fn(async (sql: string, params?: unknown[]) => {
+  const query: Mock = vi.fn((sql: string, params?: unknown[]) => {
     const s = sql.trim().toUpperCase();
 
     // Advisory lock: pg_try_advisory_lock
@@ -206,10 +205,11 @@ describe('batchCompactor — state machine + advisory lock', () => {
     const nextBatch = await rotateBatch(DEVICE_ID, pool);
 
     expect(nextBatch).not.toBeNull();
+    if (nextBatch === null) throw new Error('nextBatch must not be null');
     // New batch starts exactly where old one ends — no gap, no overlap
-    expect(nextBatch!.batch_start.getTime()).toBe(BATCH_END.getTime());
-    expect(nextBatch!.batch_end.getTime()).toBe(BATCH_END.getTime() + BATCH_WINDOW_MS);
-    expect(nextBatch!.state).toBe(BatchState.OPEN);
+    expect(nextBatch.batch_start.getTime()).toBe(BATCH_END.getTime());
+    expect(nextBatch.batch_end.getTime()).toBe(BATCH_END.getTime() + BATCH_WINDOW_MS);
+    expect(nextBatch.state).toBe(BatchState.OPEN);
     expect(batchState).toBe(BatchState.CLOSED); // old batch closed
     expect(advisoryLock).toBe(false);
   });
@@ -246,7 +246,7 @@ describe('batchCompactor — state machine + advisory lock', () => {
       const clientB = makeMockClient();
       let callCount = 0;
       const pool = {
-        connect: vi.fn(async () => (callCount++ === 0 ? clientA : clientB)),
+        connect: vi.fn(() => (callCount++ === 0 ? clientA : clientB)),
       } as unknown as pg.Pool;
 
       const [compactResult, rotateResult] = await Promise.all([
@@ -283,7 +283,7 @@ describe('batchCompactor — state machine + advisory lock', () => {
       const clientC = makeMockClient();
       let callCount = 0;
       const pool = {
-        connect: vi.fn(async () => (callCount++ === 0 ? clientR : clientC)),
+        connect: vi.fn(() => (callCount++ === 0 ? clientR : clientC)),
       } as unknown as pg.Pool;
 
       const rotateResult = await rotateBatch(DEVICE_ID, pool);
@@ -296,12 +296,13 @@ describe('batchCompactor — state machine + advisory lock', () => {
       // Created successor starts exactly at BATCH_END
       const successor = createdBatches.find((b) => b.id !== BATCH_ID);
       expect(successor).toBeDefined();
-      expect(successor!.batch_start.getTime()).toBe(BATCH_END.getTime());
+      if (successor === undefined) throw new Error('successor must be defined');
+      expect(successor.batch_start.getTime()).toBe(BATCH_END.getTime());
 
       // No gap: successor.batch_start == old batch_end
-      expect(successor!.batch_start.getTime()).toBe(BATCH_END.getTime());
+      expect(successor.batch_start.getTime()).toBe(BATCH_END.getTime());
       // No overlap: old batch_end == successor.batch_start (they're equal, not overlapping)
-      expect(BATCH_END.getTime()).toBe(successor!.batch_start.getTime());
+      expect(BATCH_END.getTime()).toBe(successor.batch_start.getTime());
     }
   });
 
