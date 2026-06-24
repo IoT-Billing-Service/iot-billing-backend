@@ -75,11 +75,11 @@ export function generateMonotonicUUID(): string {
     lastTimestamp = now;
     sequence = 0;
   }
-
+  
   const timeHex = now.toString(16).padStart(12, '0');
   const seqHex = (sequence & 0xfff).toString(16).padStart(3, '0');
   const randHex = crypto.randomBytes(8).toString('hex');
-
+  
   const part1 = timeHex.slice(0, 8);
   const part2 = timeHex.slice(8, 12);
   const part3 = '7' + seqHex;
@@ -146,18 +146,18 @@ export async function commitConfig(
 ): Promise<string> {
   const version_id = generateMonotonicUUID();
   const configJson = JSON.stringify({ version_id, tiers });
-
+  
   // Phase 1: SET config:staging
   await redis.set('config:staging', configJson);
-
+  
   // Wait COMMIT_DELAY_MS
   if (commitDelayMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, commitDelayMs));
   }
-
+  
   // Phase 2: RENAME config:staging config:active
   await redis.rename('config:staging', 'config:active');
-
+  
   return version_id;
 }
 
@@ -236,3 +236,4 @@ export function stopConfigWatcher(): void {
     activeWatcherInterval = null;
   }
 }
+
