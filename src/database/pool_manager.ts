@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { getEnv } from '../config/env.js';
 import { Redis } from 'ioredis';
+import { clampRefreshWindow } from './aggregate_refresh_window.js';
 import {
   recordTenantPoolGrant,
   recordTenantPoolRejection,
@@ -506,6 +507,15 @@ export async function runMigrationWithDistributedLock(): Promise<void> {
 
 let lastRefreshTime = new Date(Date.now() - 60000);
 
+/**
+ * Timestamp of the last adaptive continuous-aggregate refresh attempt. Used by
+ * the aggregate freshness health check (issue #51) to detect a stalled refresh
+ * loop before analytics data drifts unboundedly stale.
+ */
+export function getLastAggregateRefreshTime(): Date {
+  return lastRefreshTime;
+}
+
 interface AlignedRanges {
   min_15m: Date | null;
   max_15m: Date | null;
@@ -550,40 +560,44 @@ export async function refreshAggregatesAdaptively(): Promise<void> {
     if (row.min_15m !== null && row.max_15m !== null) {
       lastRefreshTime = new Date();
 
-      await client.query('CALL refresh_continuous_aggregate($1, $2, $3)', [
-        'fifteen_minute_device_usage',
-        row.min_15m,
-        row.max_15m,
-      ]);
+      const env = getEnv();
+      const now = new Date();
+      const conn = client;
 
-      if (row.min_1h !== null && row.max_1h !== null) {
-        await client.query('CALL refresh_continuous_aggregate($1, $2, $3)', [
-          'hourly_device_usage',
-          row.min_1h,
-          row.max_1h,
+      // Refresh a single aggregate, clamping its window to the retention-safe
+      // region so the CALL can never touch a chunk the retention policy is
+      // about to (or already did) drop (issue #51). A window entirely inside
+      // the unsafe band is skipped rather than refreshed over dropped data.
+      const refreshView = async (
+        view: string,
+        min: Date | null,
+        max: Date | null,
+      ): Promise<void> => {
+        if (min === null || max === null) {
+          return;
+        }
+        const window = clampRefreshWindow(
+          min,
+          max,
+          now,
+          env.TELEMETRY_RETENTION_DAYS,
+          env.RETENTION_SAFETY_MARGIN_DAYS,
+        );
+        if (window.skipped) {
+          return;
+        }
+        await conn.query('CALL refresh_continuous_aggregate($1, $2, $3)', [
+          view,
+          window.start,
+          window.end,
         ]);
-      }
-      if (row.min_1d !== null && row.max_1d !== null) {
-        await client.query('CALL refresh_continuous_aggregate($1, $2, $3)', [
-          'daily_device_usage',
-          row.min_1d,
-          row.max_1d,
-        ]);
-      }
-      if (row.min_1w !== null && row.max_1w !== null) {
-        await client.query('CALL refresh_continuous_aggregate($1, $2, $3)', [
-          'weekly_device_usage',
-          row.min_1w,
-          row.max_1w,
-        ]);
-      }
-      if (row.min_1m !== null && row.max_1m !== null) {
-        await client.query('CALL refresh_continuous_aggregate($1, $2, $3)', [
-          'monthly_device_usage',
-          row.min_1m,
-          row.max_1m,
-        ]);
-      }
+      };
+
+      await refreshView('fifteen_minute_device_usage', row.min_15m, row.max_15m);
+      await refreshView('hourly_device_usage', row.min_1h, row.max_1h);
+      await refreshView('daily_device_usage', row.min_1d, row.max_1d);
+      await refreshView('weekly_device_usage', row.min_1w, row.max_1w);
+      await refreshView('monthly_device_usage', row.min_1m, row.max_1m);
     }
   } catch (error) {
     console.error('Failed to adaptively refresh continuous aggregates:', error);

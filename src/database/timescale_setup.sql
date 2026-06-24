@@ -37,7 +37,14 @@ ALTER TABLE telemetry SET (
 
 SELECT add_compression_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE);
 
--- Retention policy: drop data older than 365 days
+-- Retention policy: drop data older than 365 days.
+--
+-- Invariant (issue #51): retention MUST exceed the largest continuous-aggregate
+-- start_offset (currently 180 days, monthly_device_usage) with room to spare.
+-- App-side adaptive refresh (refreshAggregatesAdaptively) additionally clamps
+-- every refresh window to `now - (365 - RETENTION_SAFETY_MARGIN_DAYS)` days, so
+-- a refresh can never race this retention job over a chunk it is dropping. Keep
+-- TELEMETRY_RETENTION_DAYS in src/config/env.ts in sync with the value below.
 SELECT add_retention_policy('telemetry', INTERVAL '365 days', if_not_exists => TRUE);
 
 -- Billing records hypertable

@@ -26,6 +26,12 @@ const envSchema = z.object({
   LEDGER_START: z.coerce.number().int().nonnegative().default(0),
   LEDGER_SYNC_CONCURRENCY: z.coerce.number().int().positive().default(10),
   SKIP_MIGRATION_ON_STARTUP: z.coerce.boolean().default(true),
+  // Telemetry hypertable retention (must match add_retention_policy in
+  // timescale_setup.sql) and a safety margin kept clear of the retention
+  // boundary. Continuous-aggregate refreshes never touch data older than
+  // (retention - margin) days, so a refresh can't race a chunk drop (issue #51).
+  TELEMETRY_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
+  RETENTION_SAFETY_MARGIN_DAYS: z.coerce.number().int().nonnegative().default(5),
 });
 
 export type Env = z.infer<typeof envSchema>;
