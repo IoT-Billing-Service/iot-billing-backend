@@ -33,6 +33,23 @@ export const blockchainTxCounter: promClient.Counter = new promClient.Counter({
   labelNames: ['status'],
 });
 
+// Billing-tier config hot-reload observability (issue #63). Incremented when a
+// batch observes the active config version change mid-processing, so the batch
+// is re-processed under the new version. Labelled by the start/end version so
+// transitions are traceable.
+export const configTransitionEvents: promClient.Gauge = new promClient.Gauge({
+  name: 'config_transition_events',
+  help: 'Billing-tier config version transitions detected mid-batch, by start/end version',
+  labelNames: ['start_version', 'end_version'],
+});
+
+export function incrementConfigTransitionEvents(
+  startVersion: string | number,
+  endVersion: string | number,
+): void {
+  configTransitionEvents.inc({ start_version: startVersion, end_version: endVersion });
+}
+
 // Rate-limiter observability (issue #50). Every decision is served from
 // centralized Redis state (the token bucket is a server-side Lua script), so
 // the limiter is pod-agnostic by construction. This counter makes that visible
