@@ -5,6 +5,8 @@ import type { Span } from '@opentelemetry/api';
 import { getDiagnosticsTracer } from '../diagnostics/tracer.js';
 import { DOMAIN_TELEMETRY, TELEMETRY_DOMAIN_ATTR } from '../diagnostics/sampler.js';
 import { refreshAggregatesAdaptively } from '../../database/pool_manager.js';
+import { getConfig } from '../../config/index.js';
+import { incrementConfigTransitionEvents } from '../../api/metrics/prometheus.js';
 
 export interface SignedPayload {
   deviceId: string;
@@ -330,5 +332,69 @@ export class RedisReorderBuffer implements ReorderBuffer {
   async getDeliverCount(deviceId: string): Promise<number> {
     const val = await this.redis.get(`reorder:delivered:${deviceId}`);
     return val != null ? parseInt(val, 10) : 0;
+  }
+}
+
+export interface TelemetryEvent {
+  deviceId: string;
+  value: number;
+}
+
+export interface ProcessedEvent {
+  deviceId: string;
+  value: number;
+  tier: string;
+}
+
+export interface BatchProcessingResult {
+  versionId: string;
+  results: ProcessedEvent[];
+}
+
+export function applyTier(value: number, configVersionId: string): string {
+  const config = getConfig(configVersionId);
+  for (const [tierName, range] of Object.entries(config.tiers)) {
+    if (value >= range.min && value <= range.max) {
+      return tierName;
+    }
+  }
+  return 'UNKNOWN_TIER';
+}
+
+export async function processBatch(
+  events: TelemetryEvent[],
+  simulateDelayMs = 0,
+): Promise<BatchProcessingResult> {
+  for (;;) {
+    const startConfig = getConfig();
+    const capturedVersion = startConfig.version_id;
+
+    const results: ProcessedEvent[] = [];
+    for (const event of events) {
+      const tier = applyTier(event.value, capturedVersion);
+      results.push({
+        deviceId: event.deviceId,
+        value: event.value,
+        tier,
+      });
+
+      if (simulateDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, simulateDelayMs));
+      }
+    }
+
+    const endConfig = getConfig();
+    const currentVersion = endConfig.version_id;
+
+    if (capturedVersion !== currentVersion) {
+      // Overlap detected! Increment transition event gauge and re-process the batch.
+      incrementConfigTransitionEvents(capturedVersion, currentVersion);
+      continue;
+    }
+
+    return {
+      versionId: capturedVersion,
+      results,
+    };
   }
 }

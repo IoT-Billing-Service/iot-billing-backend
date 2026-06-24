@@ -172,6 +172,12 @@ export const ledgerSyncPollErrors: promClient.Counter = new promClient.Counter({
   labelNames: ['sync_id', 'phase'],
 });
 
+export const configTransitionEvents: promClient.Gauge = new promClient.Gauge({
+  name: 'config_transition_events',
+  help: 'Number of batches that straddle a config version boundary',
+  labelNames: ['start_version', 'end_version'],
+});
+
 // Setters -----------------------------------------------------------------------
 
 export function setTenantPoolActiveConnections(tenantId: string, count: number): void {
@@ -239,6 +245,10 @@ export function setLedgerSyncMetrics(metrics: LedgerSyncMetrics): void {
 
 export function recordLedgerSyncPollError(syncId: string, phase: 'poll' | 'fetch'): void {
   ledgerSyncPollErrors.inc({ sync_id: syncId, phase });
+}
+
+export function incrementConfigTransitionEvents(startVersion: string, endVersion: string): void {
+  configTransitionEvents.inc({ start_version: startVersion, end_version: endVersion });
 }
 
 // Metrics endpoint -------------------------------------------------------------
