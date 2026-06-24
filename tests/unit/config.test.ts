@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { z } from 'zod';
 import type {
   generateMonotonicUUID as generateMonotonicUUIDType,
@@ -203,7 +203,7 @@ describe('Versioned Config and Two-Phase Commit', () => {
     
     try {
       const initialConfig = getConfig();
-      expect(initialConfig.tiers.TIER_2.max).toBe(10000);
+      expect(initialConfig.tiers['TIER_2']?.max).toBe(10000);
       
       const newTiers: Record<string, BillingTier> = {
         TIER_1: { min: 0, max: 500 },
@@ -220,7 +220,7 @@ describe('Versioned Config and Two-Phase Commit', () => {
       
       const updatedConfig = getConfig();
       expect(updatedConfig.version_id).toBe(newVersionId);
-      expect(updatedConfig.tiers.TIER_2.max).toBe(50000);
+      expect(updatedConfig.tiers['TIER_2']?.max).toBe(50000);
     } finally {
       stopConfigWatcher();
     }
@@ -279,8 +279,11 @@ describe('Versioned Config and Two-Phase Commit', () => {
       const transitions = metricValue.values.filter(item => item.value > 0);
       expect(transitions.length).toBeGreaterThanOrEqual(1);
       const transition = transitions[0];
-      expect(transition.labels.start_version).toBe(initialVersionId);
-      expect(transition.labels.end_version).toBe(newVersionId);
+      expect(transition).toBeDefined();
+      if (transition !== undefined) {
+        expect(transition.labels['start_version']).toBe(initialVersionId);
+        expect(transition.labels['end_version']).toBe(newVersionId);
+      }
     } finally {
       stopConfigWatcher();
     }

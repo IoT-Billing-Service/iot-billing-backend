@@ -202,7 +202,7 @@ export async function initializeConfigWatcher(redis: Redis, intervalMs = 50): Pr
 
   // Start polling Redis every intervalMs
   activeWatcherInterval = setInterval((): void => {
-    void (async () => {
+    void (async (): Promise<void> => {
       try {
         const activeVal = await redis.get('config:active');
         if (activeVal !== null) {
