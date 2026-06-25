@@ -193,8 +193,8 @@ export async function appendEvent(
 export async function readEvents(
   client: pg.PoolClient,
   tenantId: string,
-  afterSeq: number = 0,
-  limit: number = 100,
+  afterSeq = 0,
+  limit = 100,
 ): Promise<BillingEvent[]> {
   const result = await client.query<BillingEvent>(
     `SELECT id,
