@@ -357,9 +357,9 @@ describe('appendEvent — concurrent writes (race-condition regression)', () => 
 
     // Sequences must be dense: 1, 2, 3, … N
     expect(sequences[0]).toBe(1);
-    expect(sequences[i]).toBe((sequences[i - 1] ?? 0) + 1);
+    expect(sequences[sequences.length - 1]).toBe(CONCURRENCY);
     for (let i = 1; i < sequences.length; i++) {
-      expect(sequences[i]).toBe(sequences[i - 1]! + 1);
+      expect(sequences[i]).toBe((sequences[i - 1] ?? 0) + 1);
     }
   });
 
@@ -379,9 +379,9 @@ describe('appendEvent — concurrent writes (race-condition regression)', () => 
     expect(unique.size).toBe(CONCURRENCY);
 
     expect(sequences[0]).toBe(1);
-    expect(sequences[i]).toBe((sequences[i - 1] ?? 0) + 1);
+    expect(sequences[sequences.length - 1]).toBe(CONCURRENCY);
     for (let i = 1; i < sequences.length; i++) {
-      expect(sequences[i]).toBe(sequences[i - 1]! + 1);
+      expect(sequences[i]).toBe((sequences[i - 1] ?? 0) + 1);
     }
   });
 
