@@ -16,10 +16,26 @@ beforeAll(async () => {
     const extCheck = await client.query("SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'");
     if (extCheck.rows.length > 0) {
       timescaleAvailable = true;
+
+      const fs = await import('fs');
+      const path = await import('path');
+      const { fileURLToPath } = await import('url');
+
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+
+      const setupSqlPath = path.join(__dirname, '../../src/database/timescale_setup.sql');
+      const setupSql = fs.readFileSync(setupSqlPath, 'utf8');
+      await client.query(setupSql);
+
+      const aggsSqlPath = path.join(__dirname, '../../src/database/views/continuous_aggs.sql');
+      const aggsSql = fs.readFileSync(aggsSqlPath, 'utf8');
+      await client.query(aggsSql);
     }
     client.release();
     dbAvailable = true;
-  } catch {
+  } catch (err) {
+    console.error('Error during TimescaleDB test setup:', err);
     dbAvailable = false;
   }
 });
@@ -38,7 +54,7 @@ describe('TimescaleDB Dynamic Sharding & Compression Integration', () => {
   it('should verify telemetry table region column, calculate_chunk_interval(), and compression ratio > 85%', async () => {
     if (!dbAvailable || !timescaleAvailable || !pool) {
       console.log(
-        'Skipping TimescaleDB sharding/compression integration tests (database or TimescaleDB extension unavailable)'
+        'Skipping TimescaleDB sharding/compression integration tests (database or TimescaleDB extension unavailable)',
       );
       return;
     }
@@ -55,7 +71,7 @@ describe('TimescaleDB Dynamic Sharding & Compression Integration', () => {
 
       // 2. Test calculate_chunk_interval() returns a valid interval
       const intervalResult = await client.query<{ calculate_chunk_interval: unknown }>(
-        'SELECT calculate_chunk_interval()'
+        'SELECT calculate_chunk_interval()',
       );
       expect(intervalResult.rows[0]).toBeDefined();
       const calculatedVal = intervalResult.rows[0]?.calculate_chunk_interval;
@@ -103,14 +119,17 @@ describe('TimescaleDB Dynamic Sharding & Compression Integration', () => {
           await client.query(`SELECT compress_chunk($1, if_not_exists => true)`, [chunkName]);
 
           // 6. Query chunk compression stats and check compression ratio
-          const statsResult = await client.query<{ 
-            before_compression_total_bytes: string, 
-            after_compression_total_bytes: string 
-          }>(`
+          const statsResult = await client.query<{
+            before_compression_total_bytes: string;
+            after_compression_total_bytes: string;
+          }>(
+            `
             SELECT before_compression_total_bytes, after_compression_total_bytes 
             FROM chunk_compression_stats('telemetry')
             WHERE chunk_name = $1
-          `, [chunkName]);
+          `,
+            [chunkName],
+          );
 
           if (statsResult.rows.length > 0) {
             const stats = statsResult.rows[0];
@@ -119,8 +138,10 @@ describe('TimescaleDB Dynamic Sharding & Compression Integration', () => {
               const uncompressed = parseInt(stats.before_compression_total_bytes, 10);
               const compressed = parseInt(stats.after_compression_total_bytes, 10);
               expect(uncompressed).toBeGreaterThan(0);
-              const ratio = (1 - (compressed / uncompressed)) * 100;
-              console.log(`Uncompressed: ${uncompressed.toString()} bytes, Compressed: ${compressed.toString()} bytes, Compression ratio: ${ratio.toFixed(2)}%`);
+              const ratio = (1 - compressed / uncompressed) * 100;
+              console.log(
+                `Uncompressed: ${uncompressed.toString()} bytes, Compressed: ${compressed.toString()} bytes, Compression ratio: ${ratio.toFixed(2)}%`,
+              );
               expect(ratio).toBeGreaterThan(85.0);
             }
           }

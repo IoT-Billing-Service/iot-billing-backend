@@ -99,7 +99,15 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Try to enable pg_cron and schedule the job
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_cron') THEN
+        CREATE EXTENSION IF NOT EXISTS pg_cron;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'pg_cron extension could not be created: %', SQLERRM;
+END;
+$$;
 
 DO $$
 BEGIN
