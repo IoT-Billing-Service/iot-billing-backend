@@ -10,8 +10,8 @@ let timescaleAvailable = false;
 
 beforeAll(async () => {
   if (!pool) return;
+  const client = await pool.connect();
   try {
-    const client = await pool.connect();
     // Check if timescaledb extension is enabled
     const extCheck = await client.query("SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'");
     if (extCheck.rows.length > 0) {
@@ -32,11 +32,12 @@ beforeAll(async () => {
       const aggsSql = fs.readFileSync(aggsSqlPath, 'utf8');
       await client.query(aggsSql);
     }
-    client.release();
     dbAvailable = true;
   } catch (err) {
     console.error('Error during TimescaleDB test setup:', err);
     dbAvailable = false;
+  } finally {
+    client.release();
   }
 });
 
@@ -114,7 +115,7 @@ describe('TimescaleDB Dynamic Sharding & Compression Integration', () => {
       if (chunkResult.rows.length > 0) {
         const chunkName = chunkResult.rows[0]?.chunk_name;
         expect(chunkName).toBeDefined();
-        if (chunkName) {
+        if (chunkName !== undefined) {
           // 5. Manually compress the chunk to test the compression policy's ratio
           await client.query(`SELECT compress_chunk($1, if_not_exists => true)`, [chunkName]);
 
@@ -134,7 +135,7 @@ describe('TimescaleDB Dynamic Sharding & Compression Integration', () => {
           if (statsResult.rows.length > 0) {
             const stats = statsResult.rows[0];
             expect(stats).toBeDefined();
-            if (stats) {
+            if (stats !== undefined) {
               const uncompressed = parseInt(stats.before_compression_total_bytes, 10);
               const compressed = parseInt(stats.after_compression_total_bytes, 10);
               expect(uncompressed).toBeGreaterThan(0);
