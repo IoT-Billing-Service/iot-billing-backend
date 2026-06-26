@@ -32,6 +32,10 @@ SELECT add_continuous_aggregate_policy('fifteen_minute_device_usage',
     if_not_exists => TRUE
 );
 
+ALTER MATERIALIZED VIEW fifteen_minute_device_usage SET (timescaledb.compress = true);
+SELECT add_compression_policy('fifteen_minute_device_usage', INTERVAL '12 hours', if_not_exists => TRUE);
+
+
 -- Hourly usage aggregation per device
 CREATE MATERIALIZED VIEW hourly_device_usage
 WITH (timescaledb.continuous) AS
@@ -54,6 +58,10 @@ SELECT add_continuous_aggregate_policy('hourly_device_usage',
     schedule_interval => INTERVAL '1 hour',
     if_not_exists => TRUE
 );
+
+ALTER MATERIALIZED VIEW hourly_device_usage SET (timescaledb.compress = true);
+SELECT add_compression_policy('hourly_device_usage', INTERVAL '5 days', if_not_exists => TRUE);
+
 
 -- Daily usage aggregation per device
 CREATE MATERIALIZED VIEW daily_device_usage
@@ -78,6 +86,10 @@ SELECT add_continuous_aggregate_policy('daily_device_usage',
     if_not_exists => TRUE
 );
 
+ALTER MATERIALIZED VIEW daily_device_usage SET (timescaledb.compress = true);
+SELECT add_compression_policy('daily_device_usage', INTERVAL '21 days', if_not_exists => TRUE);
+
+
 -- Weekly usage aggregation per device
 CREATE MATERIALIZED VIEW weekly_device_usage
 WITH (timescaledb.continuous) AS
@@ -100,6 +112,10 @@ SELECT add_continuous_aggregate_policy('weekly_device_usage',
     schedule_interval => INTERVAL '1 week',
     if_not_exists => TRUE
 );
+
+ALTER MATERIALIZED VIEW weekly_device_usage SET (timescaledb.compress = true);
+SELECT add_compression_policy('weekly_device_usage', INTERVAL '90 days', if_not_exists => TRUE);
+
 
 -- Monthly usage aggregation per device
 CREATE MATERIALIZED VIEW monthly_device_usage
@@ -124,6 +140,10 @@ SELECT add_continuous_aggregate_policy('monthly_device_usage',
     if_not_exists => TRUE
 );
 
+ALTER MATERIALIZED VIEW monthly_device_usage SET (timescaledb.compress = true);
+SELECT add_compression_policy('monthly_device_usage', INTERVAL '270 days', if_not_exists => TRUE);
+
+
 -- Daily billing summary per account
 CREATE MATERIALIZED VIEW daily_billing_summary
 WITH (timescaledb.continuous) AS
@@ -146,6 +166,10 @@ SELECT add_continuous_aggregate_policy('daily_billing_summary',
     schedule_interval => INTERVAL '1 day',
     if_not_exists => TRUE
 );
+
+ALTER MATERIALIZED VIEW daily_billing_summary SET (timescaledb.compress = true);
+SELECT add_compression_policy('daily_billing_summary', INTERVAL '14 days', if_not_exists => TRUE);
+
 
 -- Notification trigger configuration for adaptive refresh
 CREATE SEQUENCE IF NOT EXISTS telemetry_insert_counter_seq;

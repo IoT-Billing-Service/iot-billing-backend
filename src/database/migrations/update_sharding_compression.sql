@@ -1,27 +1,10 @@
--- TimescaleDB Installation and Partition Configuration
--- Run: psql -d iot_billing -f timescale_setup.sql
+-- Migration DDL: TimescaleDB Dynamic Partition Sharding and Compression Policies
+-- Applies updates to an existing database setup safely.
 
-CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+-- 1. Add region column if not exists
+ALTER TABLE telemetry ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT 'default';
 
--- Main telemetry hypertable
-CREATE TABLE IF NOT EXISTS telemetry (
-    time TIMESTAMPTZ NOT NULL,
-    device_id TEXT NOT NULL,
-    metric_id INTEGER NOT NULL,
-    metric_value DOUBLE PRECISION NOT NULL,
-    raw_payload BYTEA,
-    ingested_at TIMESTAMPTZ DEFAULT NOW(),
-    region TEXT NOT NULL DEFAULT 'default'
-);
-
-SELECT create_hypertable(
-    'telemetry',
-    'time',
-    chunk_time_interval => INTERVAL '1 day',
-    if_not_exists => TRUE
-);
-
--- Partition by device geographical space via space partitioning on region
+-- 2. Add region-based space dimension if not exists
 SELECT add_dimension(
     'telemetry',
     'region',
@@ -29,16 +12,14 @@ SELECT add_dimension(
     if_not_exists => TRUE
 );
 
--- Compression policy: compress chunks older than 7 days
+-- 3. Update compression parameters to include region segmentby
 ALTER TABLE telemetry SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'device_id, region',
     timescaledb.compress_orderby = 'time DESC'
 );
 
-SELECT add_compression_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE);
-
--- Dynamic chunk interval calculation based on target size and ingestion rate
+-- 4. Dynamic chunk interval calculation based on target size and ingestion rate
 CREATE OR REPLACE FUNCTION calculate_chunk_interval()
 RETURNS INTERVAL AS $$
 DECLARE
@@ -98,7 +79,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Try to enable pg_cron and schedule the job
+-- 5. Try to enable pg_cron and schedule the job
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 DO $$
@@ -120,37 +101,3 @@ EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'Failed to schedule pg_cron job: %', SQLERRM;
 END;
 $$;
-
--- Retention policy: drop data older than 365 days.
---
--- Invariant (issue #51): retention MUST exceed the largest continuous-aggregate
--- start_offset (currently 180 days, monthly_device_usage) with room to spare.
--- App-side adaptive refresh (refreshAggregatesAdaptively) additionally clamps
--- every refresh window to `now - (365 - RETENTION_SAFETY_MARGIN_DAYS)` days, so
--- a refresh can never race this retention job over a chunk it is dropping. Keep
--- TELEMETRY_RETENTION_DAYS in src/config/env.ts in sync with the value below.
-SELECT add_retention_policy('telemetry', INTERVAL '365 days', if_not_exists => TRUE);
-
--- Billing records hypertable
-CREATE TABLE IF NOT EXISTS billing_records (
-    time TIMESTAMPTZ NOT NULL,
-    device_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    usage_amount BIGINT NOT NULL,
-    tx_hash TEXT,
-    status TEXT NOT NULL DEFAULT 'pending'
-);
-
-SELECT create_hypertable(
-    'billing_records',
-    'time',
-    chunk_time_interval => INTERVAL '7 days',
-    if_not_exists => TRUE
-);
-
-SELECT add_compression_policy('billing_records', INTERVAL '30 days', if_not_exists => TRUE);
-
--- Indexes for query performance
-CREATE INDEX IF NOT EXISTS idx_telemetry_device_time ON telemetry (device_id, time DESC);
-CREATE INDEX IF NOT EXISTS idx_billing_account ON billing_records (account_id, time DESC);
-CREATE INDEX IF NOT EXISTS idx_billing_status ON billing_records (status) WHERE status = 'pending';

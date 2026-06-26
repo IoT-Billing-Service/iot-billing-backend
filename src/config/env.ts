@@ -32,6 +32,9 @@ const envSchema = z.object({
   // (retention - margin) days, so a refresh can't race a chunk drop (issue #51).
   TELEMETRY_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
   RETENTION_SAFETY_MARGIN_DAYS: z.coerce.number().int().nonnegative().default(5),
+  TELEMETRY_TARGET_CHUNK_SIZE_GB: z.coerce.number().min(1).max(10).default(5),
+  TELEMETRY_COMPRESSION_DAYS: z.coerce.number().int().positive().default(7),
+  TELEMETRY_NUM_PARTITIONS: z.coerce.number().int().positive().default(8),
 });
 
 export type Env = z.infer<typeof envSchema>;
