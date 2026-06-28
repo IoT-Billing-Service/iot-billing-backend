@@ -20,19 +20,13 @@ export function initTelemetry(): NodeSDK | null {
   const env = getEnv();
   const spanProcessors = [];
 
-  if (
-    env.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined &&
-    env.OTEL_EXPORTER_OTLP_ENDPOINT !== ''
-  ) {
+  if (env.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined && env.OTEL_EXPORTER_OTLP_ENDPOINT !== '') {
     spanProcessors.push(
-      new BatchSpanProcessor(
-        new OTLPTraceExporter({ url: env.OTEL_EXPORTER_OTLP_ENDPOINT }),
-        {
-          scheduledDelayMillis: 5000,
-          exportTimeoutMillis: 10000,
-          maxExportBatchSize: 512,
-        },
-      ),
+      new BatchSpanProcessor(new OTLPTraceExporter({ url: env.OTEL_EXPORTER_OTLP_ENDPOINT }), {
+        scheduledDelayMillis: 5000,
+        exportTimeoutMillis: 10000,
+        maxExportBatchSize: 512,
+      }),
     );
   }
 

@@ -48,10 +48,7 @@ export class DomainAwareSampler implements Sampler {
     }
 
     const samplingPriority = getSamplingPriority(attributes);
-    if (
-      samplingPriority === HIGH_SAMPLING_PRIORITY ||
-      isBillingFinalize(attributes)
-    ) {
+    if (samplingPriority === HIGH_SAMPLING_PRIORITY || isBillingFinalize(attributes)) {
       return { decision: SamplingDecision.RECORD_AND_SAMPLED };
     }
 
