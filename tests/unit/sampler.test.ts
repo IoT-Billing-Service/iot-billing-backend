@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { context } from '@opentelemetry/api';
 import {
   DomainAwareSampler,
   OPERATION_ATTR,
@@ -24,7 +25,7 @@ describe('DomainAwareSampler', () => {
   it('should sample blockchain traces 100% of the time', () => {
     for (let i = 0; i < 100; i++) {
       const result = sampler.shouldSample(
-        {},
+        context.active(),
         generateTraceId(),
         'test-span',
         1,
@@ -38,7 +39,7 @@ describe('DomainAwareSampler', () => {
   it('should sample billing_finalize traces 100% of the time', () => {
     for (let i = 0; i < 100; i++) {
       const result = sampler.shouldSample(
-        {},
+        context.active(),
         generateTraceId(),
         'test-span',
         1,
@@ -52,7 +53,7 @@ describe('DomainAwareSampler', () => {
   it('should sample traces with sampling.priority HIGH (2) 100% of the time', () => {
     for (let i = 0; i < 100; i++) {
       const result = sampler.shouldSample(
-        {},
+        context.active(),
         generateTraceId(),
         'test-span',
         1,
@@ -69,7 +70,7 @@ describe('DomainAwareSampler', () => {
 
     for (let i = 0; i < totalTraces; i++) {
       const result = sampler.shouldSample(
-        {},
+        context.active(),
         generateTraceId(),
         'test-span',
         1,
