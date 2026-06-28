@@ -38,13 +38,13 @@ describe('DomainAwareSampler', () => {
   it('should sample billing_finalize traces 100% of the time', () => {
     for (let i = 0; i < 100; i++) {
       const result = sampler.shouldSample(
-      {},
-      generateTraceId(),
-      'test-span',
-      1,
-      { [OPERATION_ATTR]: BILLING_FINALIZE_OP },
-      [],
-    );
+        {},
+        generateTraceId(),
+        'test-span',
+        1,
+        { [OPERATION_ATTR]: BILLING_FINALIZE_OP },
+        [],
+      );
       expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
     }
   });
@@ -63,7 +63,7 @@ describe('DomainAwareSampler', () => {
     }
   });
 
-  it('should sample baseline traces at approximately 10% (±2% tolerance', () => {
+  it('should sample baseline traces at approximately 10% (±2% tolerance)', () => {
     let sampledCount = 0;
     const totalTraces = 1000;
 
