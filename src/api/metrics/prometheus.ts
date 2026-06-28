@@ -288,6 +288,48 @@ export function recordRedisPubsubMessagesLost(stream: string, count: number): vo
   }
 }
 
+// --- SSE (Server-Sent Events) connection metrics (issue #68) ---------------------
+// Tracks backpressure behaviour on the admin SSE stream: active connections,
+// dropped events when per-client queues are full, and successfully delivered events.
+
+export const sseConnectionsActive: promClient.Gauge = new promClient.Gauge({
+  name: 'sse_connections_active',
+  help: 'Number of active SSE client connections to the admin event stream',
+});
+
+export const sseEventsDroppedTotal: promClient.Counter = new promClient.Counter({
+  name: 'sse_events_dropped_total',
+  help: 'SSE events dropped due to full per-client queue or closed connections',
+  labelNames: ['reason'],
+});
+
+export const sseEventsSentTotal: promClient.Counter = new promClient.Counter({
+  name: 'sse_events_sent_total',
+  help: 'SSE events successfully written to client connections',
+});
+
+export const sseQueueDepth: promClient.Gauge = new promClient.Gauge({
+  name: 'sse_queue_depth',
+  help: 'Current event queue depth per SSE client',
+  labelNames: ['client_id'],
+});
+
+export function setSseConnectionsActive(count: number): void {
+  sseConnectionsActive.set(count);
+}
+
+export function incrementSseEventsDropped(reason: 'queue_full' | 'connection_closed'): void {
+  sseEventsDroppedTotal.inc({ reason });
+}
+
+export function incrementSseEventsSent(): void {
+  sseEventsSentTotal.inc();
+}
+
+export function setSseQueueDepth(clientId: string, depth: number): void {
+  sseQueueDepth.set({ client_id: clientId }, depth);
+}
+
 // Metrics endpoint -------------------------------------------------------------
 
 export function getMetricsRegistry(): promClient.Registry {

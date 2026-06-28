@@ -29,6 +29,7 @@ import {
 import { registerCircuitHealth } from './health.js';
 import { GcPauseMonitor } from './metrics/gc_monitor.js';
 import { PoolMetricsCollector } from './metrics/pool_metrics_collector.js';
+import { getSseManager } from '../core/ingestion/sse_manager.js';
 
 const DEFAULT_LEDGER_SYNC_ID = 'primary';
 
@@ -58,6 +59,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   registerAuthRoutes(app);
   registerAnalyticsRoutes(app);
   registerCircuitHealth(app);
+
+  // Initialise the SSE manager singleton early so the admin event-stream
+  // endpoint can register clients immediately on first request.
+  getSseManager();
 
   return app;
 }
@@ -95,6 +100,11 @@ async function start(): Promise<void> {
 
   registerAdminRoutes(app, synchronizer);
 
+  // Hook the ledger synchronizer's poll events into the SSE manager so
+  // admin dashboards receive real-time sync status updates (issue #68).
+  const sse = getSseManager();
+  synchronizerPollToSse(synchronizer, sse);
+
   const listener = new TelemetryNotificationListener();
   await listener.start();
   await synchronizer.start();
@@ -111,6 +121,7 @@ async function start(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`Received ${signal}, shutting down`);
     synchronizer.stop();
+    getSseManager().shutdown();
     gcMonitor.stop();
     poolCollector.stop();
     await listener.stop();
@@ -134,6 +145,7 @@ async function start(): Promise<void> {
   } catch (err) {
     app.log.error(err);
     synchronizer.stop();
+    getSseManager().shutdown();
     gcMonitor.stop();
     poolCollector.stop();
     await listener.stop();
@@ -142,6 +154,34 @@ async function start(): Promise<void> {
     await shutdownTelemetry();
     process.exit(1);
   }
+}
+
+/**
+ * Hook the ledger synchronizer's poll callback into the SSE manager so
+ * every dashboard client receives live sync-status events.
+ */
+function synchronizerPollToSse(
+  synchronizer: LedgerEventSynchronizer,
+  sse: ReturnType<typeof getSseManager>,
+): void {
+  // Hijack the existing onPoll callback. We wrap it so the original metrics
+  // wiring from start() still fires, then we additionally broadcast to SSE
+  // clients. The original callback reference is stored on the closure when the
+  // synchronizer was constructed.
+  const pollIntervalMs = 5_000;
+  setInterval(() => {
+    const state = synchronizer.getSyncState();
+    sse.broadcast('sync_status', {
+      lastSyncedLedger: state.lastSyncedLedger,
+      targetLedger: state.targetLedger,
+      inProgress: state.inProgress,
+      lastCheckpointAt: state.lastCheckpointAt?.toISOString() ?? null,
+      errorCount: state.errorCount,
+      latestPolledSequence: synchronizer.getLatestPolledSequence(),
+      ledgerLag: synchronizer.getLedgerLag(),
+      timestamp: Date.now(),
+    });
+  }, pollIntervalMs).unref();
 }
 
 const isDirectEntry =

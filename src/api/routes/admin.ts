@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { getEnv } from '../../config/env.js';
 import { IngestionStateMachine, IngestionState } from '../../core/ingestion/state_machine.js';
 import type { LedgerEventSynchronizer } from '../../core/blockchain/event_listener.js';
+import { getSseManager } from '../../core/ingestion/sse_manager.js';
 
 interface ForceSettleBody {
   recordId: string;
@@ -54,6 +55,38 @@ export function registerAdminRoutes(
   app: FastifyInstance,
   synchronizer?: LedgerEventSynchronizer,
 ): void {
+  /**
+   * GET /api/admin/events
+   * Server-Sent Events stream of ledger events for admin dashboards.
+   *
+   * Implements backpressure-aware streaming per issue #68: per-client bounded
+   * queues (MAX_QUEUE_DEPTH=50), drain-event backpressure, and a 15s keepalive
+   * heartbeat. Dropped events are tracked via Prometheus counters.
+   */
+  app.get('/api/admin/events', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!verifyAdminAuth(request, reply)) return;
+
+    const sse = getSseManager();
+
+    // Set SSE headers per the Server-Sent Events spec.
+    void reply.header('Content-Type', 'text/event-stream');
+    void reply.header('Cache-Control', 'no-cache');
+    void reply.header('Connection', 'keep-alive');
+    void reply.header('X-Accel-Buffering', 'no'); // disable nginx buffering
+
+    // Signal to Fastify that we are taking over the response stream.
+    void reply.hijack();
+
+    // Register this client with the SSE manager.
+    const clientId = sse.addClient(reply);
+
+    // Send an initial connected event only to the newly connected client.
+    sse.sendToClient(clientId, 'connected', { clientId, timestamp: Date.now() });
+
+    // The connection stays open; cleanup is handled by SseConnection's
+    // close/finish listeners on `reply.raw`.
+  });
+
   /**
    * POST /api/admin/force-settle
    * Force a billing record into SETTLED state.
