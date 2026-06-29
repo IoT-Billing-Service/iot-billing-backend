@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { z } from 'zod';
+import promClient from 'prom-client';
 import type {
   generateMonotonicUUID as generateMonotonicUUIDType,
   getConfig as getConfigType,
@@ -288,5 +289,53 @@ describe('Versioned Config and Two-Phase Commit', () => {
     } finally {
       stopConfigWatcher();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cardinality guard: 100,000 devices must not exceed 100,000 Prometheus series
+// ---------------------------------------------------------------------------
+describe('Prometheus cardinality invariant', () => {
+  it('stays below 100,000 series under 100k active devices', async () => {
+    const {
+      bufferIngestionIncrement,
+      bufferConnectionBufferBytes,
+      flushAggregates,
+      ingestionCounter,
+      connectionBufferBytes,
+    } = await import('../../src/api/metrics/prometheus.js');
+
+    // Reset the two high-cardinality metrics before the test.
+    ingestionCounter.reset();
+    connectionBufferBytes.reset();
+
+    const DEVICE_COUNT = 100_000;
+    // Simulate 5 distinct tenant/tier/region combinations — these are the only
+    // label sets that reach Prometheus (device_id is stripped).
+    const combos = [
+      { tenantId: 't1', deviceTier: 'industrial', region: 'us-east' },
+      { tenantId: 't1', deviceTier: 'consumer', region: 'eu-west' },
+      { tenantId: 't2', deviceTier: 'industrial', region: 'ap-south' },
+      { tenantId: 't2', deviceTier: 'consumer', region: 'us-west' },
+      { tenantId: 't3', deviceTier: 'industrial', region: 'us-east' },
+    ];
+
+    for (let i = 0; i < DEVICE_COUNT; i++) {
+      const c = combos[i % combos.length]!;
+      bufferIngestionIncrement(c.tenantId, c.deviceTier, c.region, 'success');
+      bufferConnectionBufferBytes(c.tenantId, c.deviceTier, c.region, 512);
+    }
+
+    // Flush buffered aggregates into the Prometheus registry.
+    flushAggregates();
+
+    // Count total time series across all registered metrics.
+    const snapshot = await promClient.register.getMetricsAsJSON();
+    const totalSeries = snapshot.reduce((sum, m) => {
+      const v = m as { values?: unknown[] };
+      return sum + (v.values?.length ?? 0);
+    }, 0);
+
+    expect(totalSeries).toBeLessThan(100_000);
   });
 });

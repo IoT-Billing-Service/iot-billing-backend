@@ -1,5 +1,150 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import promClient from 'prom-client';
+import { createWriteStream, type WriteStream, statSync } from 'node:fs';
+
+// ---------------------------------------------------------------------------
+// Per-device debug log (rotated at 10 MB, NOT Prometheus)
+// ---------------------------------------------------------------------------
+const DEVICE_LOG_PATH = '/var/log/device-metrics.log';
+const DEVICE_LOG_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+let _deviceLogStream: WriteStream | null = null;
+let _deviceLogBytes = 0;
+
+function getDeviceLogStream(): WriteStream {
+  if (_deviceLogStream === null) {
+    try {
+      _deviceLogBytes = statSync(DEVICE_LOG_PATH).size;
+    } catch {
+      _deviceLogBytes = 0;
+    }
+    _deviceLogStream = createWriteStream(DEVICE_LOG_PATH, { flags: 'a' });
+  }
+  return _deviceLogStream;
+}
+
+/** Write a per-device debug entry. Rotates the file when it exceeds 10 MB. */
+export function logDeviceMetric(deviceId: string, fields: Record<string, unknown>): void {
+  if (_deviceLogBytes >= DEVICE_LOG_MAX_BYTES) {
+    // Rotate: close current stream and start fresh (overwrite).
+    _deviceLogStream?.end();
+    _deviceLogStream = createWriteStream(DEVICE_LOG_PATH, { flags: 'w' });
+    _deviceLogBytes = 0;
+  }
+  const line =
+    JSON.stringify({ level: 'debug', time: Date.now(), device_id: deviceId, ...fields }) + '\n';
+  getDeviceLogStream().write(line);
+  _deviceLogBytes += Buffer.byteLength(line);
+}
+
+// ---------------------------------------------------------------------------
+// Cardinality guard
+// ---------------------------------------------------------------------------
+const MAX_SERIES = 100_000;
+
+/**
+ * Register a metric only if the current series count for that metric name is
+ * below MAX_SERIES. If the guard trips, emits a HighCardinalityWarning log and
+ * returns null instead of throwing.
+ */
+export function registerMetric<T extends promClient.Metric>(
+  factory: () => T,
+  name: string,
+): T | null {
+  const existing = promClient.register.getMetricsAsJSON().filter((m) => m.name === name);
+  const seriesCount = existing.reduce((sum, m) => {
+    const v = m as { values?: unknown[] };
+    return sum + (v.values?.length ?? 0);
+  }, 0);
+  if (seriesCount > MAX_SERIES) {
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'HighCardinalityWarning',
+        metric: name,
+        series: seriesCount,
+        limit: MAX_SERIES,
+      }),
+    );
+    return null;
+  }
+  return factory();
+}
+
+// ---------------------------------------------------------------------------
+// Aggregator: pre-aggregate per-device increments into low-cardinality counters
+// ---------------------------------------------------------------------------
+interface AggregateEntry {
+  ingestion: Map<string, number>; // status -> count
+  bufferBytes: Map<string, number>; // aggregateKey -> bytes
+}
+
+// aggregateKey = `${tenant_id}:${device_tier}:${region}`
+const _aggregates: Map<string, AggregateEntry> = new Map();
+
+function getEntry(aggregateKey: string): AggregateEntry {
+  let entry = _aggregates.get(aggregateKey);
+  if (entry === undefined) {
+    entry = { ingestion: new Map(), bufferBytes: new Map() };
+    _aggregates.set(aggregateKey, entry);
+  }
+  return entry;
+}
+
+/** Buffer an ingestion increment for the next flush cycle. */
+export function bufferIngestionIncrement(
+  tenantId: string,
+  deviceTier: string,
+  region: string,
+  status: string,
+): void {
+  const key = `${tenantId}:${deviceTier}:${region}`;
+  const entry = getEntry(key);
+  entry.ingestion.set(status, (entry.ingestion.get(status) ?? 0) + 1);
+}
+
+/** Buffer a connection-buffer-bytes update for the next flush cycle. */
+export function bufferConnectionBufferBytes(
+  tenantId: string,
+  deviceTier: string,
+  region: string,
+  bytes: number,
+): void {
+  const key = `${tenantId}:${deviceTier}:${region}`;
+  const entry = getEntry(key);
+  entry.bufferBytes.set(key, bytes);
+}
+
+/** Flush buffered aggregates into Prometheus counters/gauges. Called every 60 s. */
+export function flushAggregates(): void {
+  for (const [key, entry] of _aggregates) {
+    const [tenantId = 'unknown', deviceTier = 'unknown', region = 'unknown'] = key.split(':');
+    for (const [status, count] of entry.ingestion) {
+      ingestionCounter.inc({ tenant_id: tenantId, device_tier: deviceTier, region, status }, count);
+    }
+    for (const [, bytes] of entry.bufferBytes) {
+      connectionBufferBytes.set({ tenant_id: tenantId, device_tier: deviceTier, region }, bytes);
+    }
+  }
+  _aggregates.clear();
+}
+
+let _flushInterval: ReturnType<typeof setInterval> | null = null;
+
+/** Start the 60-second aggregate flush loop. Idempotent. */
+export function startAggregateFlush(): void {
+  if (_flushInterval !== null) return;
+  _flushInterval = setInterval(flushAggregates, 60_000);
+  (_flushInterval as { unref?: () => void }).unref?.();
+}
+
+/** Stop the flush loop (for tests / clean shutdown). */
+export function stopAggregateFlush(): void {
+  if (_flushInterval !== null) {
+    clearInterval(_flushInterval);
+    _flushInterval = null;
+  }
+}
 
 // `collectDefaultMetrics` registers a fixed set of process/runtime metrics on the
 // supplied registry. Calling it more than once against the same registry throws
@@ -21,10 +166,12 @@ export const httpRequestDuration: promClient.Histogram = new promClient.Histogra
   buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
 });
 
+// device_id removed — use aggregate labels to bound cardinality.
+// Per-device detail is available in the device-metrics debug log.
 export const ingestionCounter: promClient.Counter = new promClient.Counter({
   name: 'ingestion_packets_total',
   help: 'Total number of ingested telemetry packets',
-  labelNames: ['device_id', 'status'],
+  labelNames: ['tenant_id', 'device_tier', 'region', 'status'],
 });
 
 export const blockchainTxCounter: promClient.Counter = new promClient.Counter({
@@ -97,10 +244,11 @@ export const eventLoopLag: promClient.Gauge = new promClient.Gauge({
   help: 'Current event loop lag in ms',
 });
 
+// device_id removed — use aggregate labels to bound cardinality.
 export const connectionBufferBytes: promClient.Gauge = new promClient.Gauge({
   name: 'connection_buffer_bytes',
-  help: 'Current partial telemetry reassembly buffer size per device',
-  labelNames: ['device_id'],
+  help: 'Partial telemetry reassembly buffer size, aggregated by tenant/tier/region',
+  labelNames: ['tenant_id', 'device_tier', 'region'],
 });
 
 // Required GC pause buckets per issue #19: 1, 5, 10, 25, 50, 100, 250, 500 ms
@@ -242,8 +390,13 @@ export function recordGcPause(durationMs: number): void {
   }
 }
 
-export function setConnectionBufferBytes(deviceId: string, bytes: number): void {
-  connectionBufferBytes.set({ device_id: deviceId }, bytes);
+export function setConnectionBufferBytes(
+  tenantId: string,
+  deviceTier: string,
+  region: string,
+  bytes: number,
+): void {
+  connectionBufferBytes.set({ tenant_id: tenantId, device_tier: deviceTier, region }, bytes);
 }
 
 export interface PoolSizeMetrics {

@@ -1,5 +1,5 @@
 import { PerformanceObserver, monitorEventLoopDelay } from 'node:perf_hooks';
-import { recordGcPause, eventLoopLag, setConnectionBufferBytes } from './prometheus.js';
+import { recordGcPause, eventLoopLag, bufferConnectionBufferBytes, logDeviceMetric } from './prometheus.js';
 
 export let lastHealthCheckAt = 0;
 let forcedGcTimer: ReturnType<typeof setTimeout> | null = null;
@@ -17,8 +17,20 @@ export function reportHealthCheckCompleted(): void {
   forcedGcTimer.unref();
 }
 
-export function recordConnectionBufferBytes(deviceId: string, bytes: number): void {
-  setConnectionBufferBytes(deviceId, bytes);
+/**
+ * Record connection buffer bytes for a device.
+ * Prometheus uses aggregate labels (tenant/tier/region) to stay low-cardinality.
+ * Per-device detail is written to the device-metrics debug log.
+ */
+export function recordConnectionBufferBytes(
+  deviceId: string,
+  bytes: number,
+  tenantId = 'unknown',
+  deviceTier = 'unknown',
+  region = 'unknown',
+): void {
+  bufferConnectionBufferBytes(tenantId, deviceTier, region, bytes);
+  logDeviceMetric(deviceId, { connection_buffer_bytes: bytes });
 }
 
 /**
